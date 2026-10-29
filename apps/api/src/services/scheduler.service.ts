@@ -326,8 +326,9 @@ export class SchedulerService {
       }
     }
 
-    // Invalidate general grid cache
+    // Invalidate general grid cache and public schedules cache
     await cacheService.del('grid:status:all');
+    await cacheService.delPattern('schedules:public:*');
 
     // Emit real-time Socket event
     socketEmitter.emitSchedulePublished({
@@ -356,6 +357,7 @@ export class SchedulerService {
 
     // Bust Redis cache for this schedule
     await cacheService.delPattern(`schedules:published:*:${schedule.planningDate}`);
+    await cacheService.delPattern('schedules:public:*');
     await cacheService.del('grid:status:all');
 
     return schedule;

@@ -43,6 +43,10 @@ export class CacheService {
     return `schedules:published:${feederId}:${date}`;
   }
 
+  getPublicScheduleKey(date: string, zoneId?: string, feederId?: string): string {
+    return `schedules:public:${date}:${zoneId || 'all'}:${feederId || 'all'}`;
+  }
+
   getGridStatusKey(zoneId?: string): string {
     return zoneId ? `grid:status:${zoneId}` : 'grid:status:all';
   }
