@@ -1236,6 +1236,384 @@ const runSuite = async () => {
       'Soft-deleted user is excluded from lookups with 404 USER_NOT_FOUND'
     );
 
+    // ==========================================
+    // Test 18: Admin Grid Topology & Customer Meter Binding (Phase 11)
+    // ==========================================
+
+    // 18a. Zone CRUD & Referential Cascade Guards
+    // 18a-1: Duplicate Zone creation rejected
+    const dupZoneRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/zones',
+      {
+        name: 'Dhanmondi Duplicate',
+        code: 'DHN',
+        description: 'Duplicate zone'
+      },
+      adminToken
+    );
+    assert(
+      dupZoneRes.status === 409 && dupZoneRes.body.error.code === 'ZONE_EXISTS',
+      'POST /api/v1/admin/zones rejects duplicate zone code with 409 ZONE_EXISTS'
+    );
+
+    // 18a-2: Zone deletion blocked by active child substations
+    const delZoneBlockedRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/v1/admin/zones/zn_dhanmondi',
+      undefined,
+      adminToken
+    );
+    assert(
+      delZoneBlockedRes.status === 400 && delZoneBlockedRes.body.error.code === 'ACTIVE_SUBSTATIONS_EXIST',
+      'DELETE /api/v1/admin/zones/:id blocked by active child substations (400 ACTIVE_SUBSTATIONS_EXIST)'
+    );
+
+    // 18a-3: Zone detail enriched with active substations list & count
+    const getZoneDetailRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/zones/zn_dhanmondi',
+      undefined,
+      adminToken
+    );
+    assert(
+      getZoneDetailRes.status === 200 &&
+      getZoneDetailRes.body.success === true &&
+      getZoneDetailRes.body.data.substationsCount >= 2 &&
+      Array.isArray(getZoneDetailRes.body.data.substations),
+      'GET /api/v1/admin/zones/:id returns zone details enriched with child substations'
+    );
+
+    // 18b. Substation CRUD & Referential Cascade Guards
+    // 18b-1: Substation creation invalid zone rejected
+    const invalidZoneSubRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/substations',
+      {
+        name: 'Orphan Substation',
+        code: 'SUB_ORPHAN',
+        zoneId: 'zn_nonexistent_999',
+        capacityMW: 50
+      },
+      adminToken
+    );
+    assert(
+      invalidZoneSubRes.status === 404 && invalidZoneSubRes.body.error.code === 'ZONE_NOT_FOUND',
+      'POST /api/v1/admin/substations rejects non-existent zoneId with 404 ZONE_NOT_FOUND'
+    );
+
+    // 18b-2: Substation creation duplicate code rejected
+    const dupSubRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/substations',
+      {
+        name: 'Duplicate Dhanmondi Sub',
+        code: 'SUB-DHN-01',
+        zoneId: 'zn_dhanmondi',
+        capacityMW: 60
+      },
+      adminToken
+    );
+    assert(
+      dupSubRes.status === 409 && dupSubRes.body.error.code === 'SUBSTATION_EXISTS',
+      'POST /api/v1/admin/substations rejects duplicate code with 409 SUBSTATION_EXISTS'
+    );
+
+    // 18b-3: Substation deletion blocked by active child feeders
+    const delSubBlockedRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/v1/admin/substations/sub_dhn_1',
+      undefined,
+      adminToken
+    );
+    assert(
+      delSubBlockedRes.status === 400 && delSubBlockedRes.body.error.code === 'ACTIVE_FEEDERS_EXIST',
+      'DELETE /api/v1/admin/substations/:id blocked by active child feeders (400 ACTIVE_FEEDERS_EXIST)'
+    );
+
+    // 18b-4: Substation listing with pagination and zone metadata enrichment
+    const listSubsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/substations?page=1&pageSize=2',
+      undefined,
+      adminToken
+    );
+    assert(
+      listSubsRes.status === 200 &&
+      listSubsRes.body.success === true &&
+      Array.isArray(listSubsRes.body.data.items) &&
+      listSubsRes.body.data.meta.page === 1 &&
+      listSubsRes.body.data.items[0].zone &&
+      typeof listSubsRes.body.data.items[0].feedersCount === 'number',
+      'GET /api/v1/admin/substations returns paginated envelope enriched with zone and feeder counts'
+    );
+
+    // 18c. Feeder CRUD & Referential Cascade Guards
+    // 18c-1: Feeder creation invalid substation rejected
+    const invalidSubFeederRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/feeders',
+      {
+        name: 'Orphan Feeder',
+        code: 'FDR_ORPHAN',
+        substationId: 'sub_nonexistent_999',
+        capacityMW: 10
+      },
+      adminToken
+    );
+    assert(
+      invalidSubFeederRes.status === 404 && invalidSubFeederRes.body.error.code === 'SUBSTATION_NOT_FOUND',
+      'POST /api/v1/admin/feeders rejects non-existent substationId with 404 SUBSTATION_NOT_FOUND'
+    );
+
+    // 18c-2: Feeder creation duplicate code rejected
+    const dupFeederRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/feeders',
+      {
+        name: 'Duplicate Road 27 Feeder',
+        code: 'FDR-DHN-27',
+        substationId: 'sub_dhn_1',
+        capacityMW: 15
+      },
+      adminToken
+    );
+    assert(
+      dupFeederRes.status === 409 && dupFeederRes.body.error.code === 'FEEDER_EXISTS',
+      'POST /api/v1/admin/feeders rejects duplicate feeder code with 409 FEEDER_EXISTS'
+    );
+
+    // 18c-3: Feeder critical toggle
+    const toggleCritRes = await request(
+      serverUrl,
+      'PATCH',
+      '/api/v1/admin/feeders/fdr_dhn_3/critical',
+      { isCritical: true },
+      adminToken
+    );
+    assert(
+      toggleCritRes.status === 200 &&
+      toggleCritRes.body.success === true &&
+      toggleCritRes.body.data.isCritical === true,
+      'PATCH /api/v1/admin/feeders/:id/critical toggles feeder critical status successfully'
+    );
+
+    // 18c-4: Feeder deletion blocked by active child meters
+    const delFeederBlockedRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/v1/admin/feeders/fdr_dhn_1',
+      undefined,
+      adminToken
+    );
+    assert(
+      delFeederBlockedRes.status === 400 && delFeederBlockedRes.body.error.code === 'ACTIVE_METERS_EXIST',
+      'DELETE /api/v1/admin/feeders/:id blocked by active child meters (400 ACTIVE_METERS_EXIST)'
+    );
+
+    // 18d. Master Meter Directory & Customer Link Enrichment
+    // 18d-1: Meter listing with pagination envelope and customer link status
+    const listMetersRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/meters?page=1&pageSize=5',
+      undefined,
+      adminToken
+    );
+    assert(
+      listMetersRes.status === 200 &&
+      listMetersRes.body.success === true &&
+      Array.isArray(listMetersRes.body.data.items) &&
+      listMetersRes.body.data.items.some((m: any) => m.isLinked === true && m.linkedCustomer !== null),
+      'GET /api/v1/admin/meters returns paginated directory with customer link status'
+    );
+
+    // 18d-2: Active customer link blocks meter deletion
+    const delLinkedMeterBlockedRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/v1/admin/meters/mtr_dhn_101',
+      undefined,
+      adminToken
+    );
+    assert(
+      delLinkedMeterBlockedRes.status === 400 && delLinkedMeterBlockedRes.body.error.code === 'METER_LINKED_TO_CUSTOMER',
+      'DELETE /api/v1/admin/meters/:id blocked when meter is linked to active customer (400 METER_LINKED_TO_CUSTOMER)'
+    );
+
+    // 18e. Customer Meter Exclusive Binding
+    // 18e-1: Customer B attempts to link meter already bound to Customer A
+    const crossCustomerMeterCollisionRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/customers/me/meters',
+      {
+        meterNumber: 'MTR-DHN-101',
+        nickname: 'Attempted Duplicate'
+      },
+      customerBToken
+    );
+    assert(
+      crossCustomerMeterCollisionRes.status === 409 && crossCustomerMeterCollisionRes.body.error.code === 'METER_ALREADY_LINKED',
+      'POST /api/v1/customers/me/meters blocks cross-customer meter binding collision (409 METER_ALREADY_LINKED)'
+    );
+
+    // 18e-2: Customer B links unlinked physical meter MTR-DHN-102
+    const custBLinkRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/customers/me/meters',
+      {
+        meterNumber: 'MTR-DHN-102',
+        nickname: 'Satmasjid Office',
+        isPrimary: true
+      },
+      customerBToken
+    );
+    assert(
+      custBLinkRes.status === 201 &&
+      custBLinkRes.body.success === true &&
+      custBLinkRes.body.data.meterNumber === 'MTR-DHN-102' &&
+      custBLinkRes.body.data.isPrimary === true,
+      'POST /api/v1/customers/me/meters links available physical meter with isPrimary=true'
+    );
+    const custBLinkId1 = custBLinkRes.body.data.id;
+
+    // 18f. Primary Switch & Auto-Promotion on Unlink
+    // Admin registers fresh meter MTR-TEST-999 for Customer B to link as second meter
+    const adminCreateMeterRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/meters',
+      {
+        meterNumber: 'MTR-TEST-999',
+        feederId: 'fdr_mir_2',
+        address: 'Mirpur Stadium Commercial'
+      },
+      adminToken
+    );
+    assert(adminCreateMeterRes.status === 201, 'Admin registers secondary test meter MTR-TEST-999');
+
+    const custBLink2Res = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/customers/me/meters',
+      {
+        meterNumber: 'MTR-TEST-999',
+        nickname: 'Mirpur Stadium Office',
+        isPrimary: false
+      },
+      customerBToken
+    );
+    assert(custBLink2Res.status === 201 && custBLink2Res.body.data.isPrimary === false, 'Customer B links secondary meter with isPrimary=false');
+    const custBLinkId2 = custBLink2Res.body.data.id;
+
+    // Designate second meter as primary
+    const switchPrimaryRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/customers/me/meters/${custBLinkId2}/primary`,
+      undefined,
+      customerBToken
+    );
+    assert(
+      switchPrimaryRes.status === 200 && switchPrimaryRes.body.data.isPrimary === true,
+      'PATCH /api/v1/customers/me/meters/:id/primary switches primary meter'
+    );
+
+    // Unlink newly primary meter -> verify first meter is auto-promoted to primary
+    const unlinkPrimaryRes = await request(
+      serverUrl,
+      'DELETE',
+      `/api/v1/customers/me/meters/${custBLinkId2}`,
+      undefined,
+      customerBToken
+    );
+    assert(unlinkPrimaryRes.status === 200, 'Customer B unlinks primary meter');
+
+    const custBMetersListRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/meters',
+      undefined,
+      customerBToken
+    );
+    const hasUnlinked = custBMetersListRes.body.data.some((m: any) => m.id === custBLinkId2);
+    const activePrimaryMeter = custBMetersListRes.body.data.find((m: any) => m.isPrimary === true);
+    assert(
+      custBMetersListRes.status === 200 &&
+      !hasUnlinked &&
+      activePrimaryMeter !== undefined,
+      'DELETE /api/v1/customers/me/meters/:id auto-promotes remaining active meter to primary'
+    );
+
+    // 18g. Specific Meter Live Status (Endpoint 24) & IDOR Protection
+    const getMeterStatusRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/customers/me/meters/${custBLinkId1}/status`,
+      undefined,
+      customerBToken
+    );
+    assert(
+      getMeterStatusRes.status === 200 &&
+      getMeterStatusRes.body.success === true &&
+      getMeterStatusRes.body.data.meterNumber === 'MTR-DHN-102' &&
+      getMeterStatusRes.body.data.status === 'ONLINE' &&
+      getMeterStatusRes.body.data.feederName === 'Satmasjid Road Feeder',
+      'GET /api/v1/customers/me/meters/:id/status returns real-time live power status for specific meter'
+    );
+
+    // IDOR Protection: Customer A blocked from accessing Customer B's meter status
+    const idorMeterStatusRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/customers/me/meters/${custBLinkId1}/status`,
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      idorMeterStatusRes.status === 404 && idorMeterStatusRes.body.error.code === 'LINK_NOT_FOUND',
+      'IDOR Protection: Customer blocked from inspecting other customer meter status (404 LINK_NOT_FOUND)'
+    );
+
+    // 18h. Specific Meter Schedules (Endpoint 25) & IDOR Protection
+    const getMeterSchedulesRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/customers/me/meters/${custBLinkId1}/schedules`,
+      undefined,
+      customerBToken
+    );
+    assert(
+      getMeterSchedulesRes.status === 200 &&
+      getMeterSchedulesRes.body.success === true &&
+      Array.isArray(getMeterSchedulesRes.body.data),
+      'GET /api/v1/customers/me/meters/:id/schedules returns feeder schedules for specific meter'
+    );
+
+    // IDOR Protection: Customer A blocked from accessing Customer B's meter schedules
+    const idorMeterSchedulesRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/customers/me/meters/${custBLinkId1}/schedules`,
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      idorMeterSchedulesRes.status === 404 && idorMeterSchedulesRes.body.error.code === 'LINK_NOT_FOUND',
+      'IDOR Protection: Customer blocked from inspecting other customer meter schedules (404 LINK_NOT_FOUND)'
+    );
+
   } catch (err: any) {
     logger.error('Test execution error:', err);
     failed++;
