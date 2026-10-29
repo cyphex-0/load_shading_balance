@@ -117,7 +117,7 @@ usersRouter.post(
   }
 );
 
-// Endpoint 15: GET /api/users/me/notifications
+// Endpoint 15: GET /api/users/me/notifications (and /api/v1/users/me/notifications)
 usersRouter.get(
   '/users/me/notifications',
   authenticateUser,
@@ -127,8 +127,10 @@ usersRouter.get(
     const pageSize = (req.query.pageSize as number) || 20;
     const unreadOnly = req.query.unreadOnly as boolean | undefined;
 
-    let list = Array.from(store.notifications.values()).filter((n) => n.userId === req.user.sub);
+    const userNotifs = Array.from(store.notifications.values()).filter((n) => n.userId === req.user.sub);
+    const unreadCount = userNotifs.filter((n) => !n.isRead).length;
 
+    let list = userNotifs;
     if (unreadOnly) {
       list = list.filter((n) => !n.isRead);
     }
@@ -142,6 +144,7 @@ usersRouter.get(
     return successResponse(res, {
       items: paginated,
       notifications: paginated, // Backwards-compatible key for frontend
+      unreadCount,
       meta: {
         page,
         pageSize,
@@ -159,8 +162,8 @@ usersRouter.get(
   }
 );
 
-// Endpoint 16: POST /api/users/me/notifications/:id/read
-usersRouter.post('/users/me/notifications/:id/read', authenticateUser, (req: any, res) => {
+// Endpoint 16: PATCH /api/v1/users/me/notifications/:id/read (and POST alias)
+const handleMarkNotificationRead = (req: any, res: any) => {
   const notif = store.notifications.get(req.params.id);
   if (!notif || notif.userId !== req.user.sub) {
     throw new NotFoundError('Notification not found', 'NOTIFICATION_NOT_FOUND');
@@ -170,10 +173,13 @@ usersRouter.post('/users/me/notifications/:id/read', authenticateUser, (req: any
   notif.readAt = new Date().toISOString();
 
   return successResponse(res, { success: true, notification: notif });
-});
+};
 
-// Endpoint 17: PATCH /api/notifications/read-all
-usersRouter.patch('/notifications/read-all', authenticateUser, (req: any, res) => {
+usersRouter.patch('/users/me/notifications/:id/read', authenticateUser, handleMarkNotificationRead);
+usersRouter.post('/users/me/notifications/:id/read', authenticateUser, handleMarkNotificationRead);
+
+// Endpoint 17: POST /api/v1/users/me/notifications/read-all (and PATCH aliases)
+const handleMarkAllNotificationsRead = (req: any, res: any) => {
   const now = new Date().toISOString();
   let updatedCount = 0;
 
@@ -186,4 +192,10 @@ usersRouter.patch('/notifications/read-all', authenticateUser, (req: any, res) =
   }
 
   return successResponse(res, { success: true, count: updatedCount });
-});
+};
+
+// Canonical Endpoint 17 per docs/api.md
+usersRouter.post('/users/me/notifications/read-all', authenticateUser, handleMarkAllNotificationsRead);
+usersRouter.patch('/users/me/notifications/read-all', authenticateUser, handleMarkAllNotificationsRead);
+// Backwards-compatible legacy route
+usersRouter.patch('/notifications/read-all', authenticateUser, handleMarkAllNotificationsRead);
