@@ -46,7 +46,8 @@ export const changePasswordSchema = z.object({
 export const linkMeterSchema = z.object({
   meterNumber: z.string().min(1, 'Meter number is required'),
   address: z.string().optional(),
-  nickname: z.string().optional()
+  nickname: z.string().optional(),
+  isPrimary: z.boolean().optional()
 });
 
 // Outage report validator
@@ -133,6 +134,11 @@ export const createMeterSchema = z.object({
   meterNumber: z.string().min(3, 'Meter number is required'),
   feederId: z.string().min(1, 'Feeder ID is required'),
   address: z.string().min(3, 'Address is required')
+});
+
+export const updateMeterSchema = z.object({
+  feederId: z.string().min(1, 'Feeder ID is required').optional(),
+  address: z.string().min(3, 'Address is required').optional()
 });
 
 export const provisionUserSchema = z.object({

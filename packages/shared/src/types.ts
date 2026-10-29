@@ -144,6 +144,16 @@ export interface CustomerMeterDto {
   meter: MeterDto;
 }
 
+export interface MeterLiveStatusDto {
+  meterId: string;
+  meterNumber: string;
+  feederId: string;
+  feederName: string;
+  status: FeederStatus;
+  isCritical: boolean;
+  updatedAt: string;
+}
+
 export interface ScheduleSlotDto {
   id: string;
   scheduleId: string;
