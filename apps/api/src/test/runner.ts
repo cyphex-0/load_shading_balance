@@ -5,7 +5,16 @@ import { store } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
-import { UserRole, UserStatus, AssignmentStatus, paginationQuerySchema, NotificationType } from '@load-shedding/shared';
+import {
+  UserRole,
+  UserStatus,
+  AssignmentStatus,
+  ScheduleStatus,
+  OutageStatus,
+  FeederStatus,
+  paginationQuerySchema,
+  NotificationType
+} from '@load-shedding/shared';
 import {
   NotFoundError,
   ConflictError,
@@ -1613,6 +1622,270 @@ const runSuite = async () => {
       idorMeterSchedulesRes.status === 404 && idorMeterSchedulesRes.body.error.code === 'LINK_NOT_FOUND',
       'IDOR Protection: Customer blocked from inspecting other customer meter schedules (404 LINK_NOT_FOUND)'
     );
+
+    // ============================================================================
+    // Phase 12: Grid Discovery, Effective Feeder Status, and Operator Overview (Test 19)
+    // ============================================================================
+
+    // 19a. Public Zones Discovery (Endpoint 18)
+    const publicZonesRes = await request(serverUrl, 'GET', '/api/v1/zones');
+    assert(
+      publicZonesRes.status === 200 &&
+      publicZonesRes.body.success === true &&
+      Array.isArray(publicZonesRes.body.data) &&
+      publicZonesRes.body.data.length >= 2,
+      'GET /api/v1/zones returns active geographic zones list with relational counts'
+    );
+    const dhnZoneSummary = publicZonesRes.body.data.find((z: any) => z.code === 'DHN');
+    assert(
+      dhnZoneSummary &&
+      dhnZoneSummary.substationsCount >= 1 &&
+      dhnZoneSummary.feedersCount >= 2 &&
+      dhnZoneSummary.totalCapacityMW > 0,
+      'GET /api/v1/zones enriches zones with substationsCount, feedersCount, and totalCapacityMW'
+    );
+
+    // Test search filter on zones
+    const searchZoneRes = await request(serverUrl, 'GET', '/api/v1/zones?search=Mirpur');
+    assert(
+      searchZoneRes.status === 200 &&
+      searchZoneRes.body.data.length === 1 &&
+      searchZoneRes.body.data[0].code === 'MIR',
+      'GET /api/v1/zones?search=Mirpur correctly filters zones by search term'
+    );
+
+    // Test pagination on zones
+    const paginatedZonesRes = await request(serverUrl, 'GET', '/api/v1/zones?page=1&pageSize=1');
+    assert(
+      paginatedZonesRes.status === 200 &&
+      paginatedZonesRes.body.data.items.length === 1 &&
+      paginatedZonesRes.body.data.meta.total >= 2 &&
+      paginatedZonesRes.body.data.meta.totalPages >= 2,
+      'GET /api/v1/zones supports pagination envelope when page/pageSize query params are provided'
+    );
+
+    // 19b. Public Feeders Discovery with Effective Feeder Status (Endpoint 19)
+    const publicFeedersRes = await request(serverUrl, 'GET', '/api/v1/feeders');
+    assert(
+      publicFeedersRes.status === 200 &&
+      publicFeedersRes.body.success === true &&
+      Array.isArray(publicFeedersRes.body.data) &&
+      publicFeedersRes.body.data.length >= 4,
+      'GET /api/v1/feeders returns active feeders with effectiveStatus and substation/zone details'
+    );
+
+    // Test filter isCritical=true
+    const criticalFeedersRes = await request(serverUrl, 'GET', '/api/v1/feeders?isCritical=true');
+    assert(
+      criticalFeedersRes.status === 200 &&
+      criticalFeedersRes.body.data.length >= 1 &&
+      criticalFeedersRes.body.data.every((f: any) => f.isCritical === true) &&
+      criticalFeedersRes.body.data.some((f: any) => f.code === 'FDR-DHN-HOSP'),
+      'GET /api/v1/feeders?isCritical=true filters for critical exempt hospital feeders'
+    );
+
+    // Test filter zoneId
+    const dhnFeedersRes = await request(serverUrl, 'GET', '/api/v1/feeders?zoneId=zn_dhanmondi');
+    assert(
+      dhnFeedersRes.status === 200 &&
+      dhnFeedersRes.body.data.every((f: any) => f.zoneId === 'zn_dhanmondi'),
+      'GET /api/v1/feeders?zoneId=zn_dhanmondi correctly scopes feeders to Dhanmondi zone'
+    );
+
+    // 19c. Dynamic Scheduled Load Shedding State Transition
+    // Inject an active published schedule for today with current slot covering now
+    const nowTime = new Date();
+    const todayStr = nowTime.toISOString().split('T')[0];
+    const activeSlotStart = new Date(nowTime.getTime() - 15 * 60 * 1000).toISOString();
+    const activeSlotEnd = new Date(nowTime.getTime() + 45 * 60 * 1000).toISOString();
+
+    const liveTestSchedId = `sched_live_${Date.now()}`;
+    const liveTestSlotId = `slot_live_${Date.now()}`;
+    const liveTestAsgnId = `asgn_live_${Date.now()}`;
+
+    store.schedules.set(liveTestSchedId, {
+      id: liveTestSchedId,
+      planningDate: todayStr,
+      totalDeficitMW: 20.0,
+      status: ScheduleStatus.PUBLISHED,
+      createdById: 'usr_op_1',
+      publishedAt: nowTime.toISOString(),
+      createdAt: nowTime.toISOString(),
+      updatedAt: nowTime.toISOString()
+    });
+
+    store.scheduleSlots.set(liveTestSlotId, {
+      id: liveTestSlotId,
+      scheduleId: liveTestSchedId,
+      startTime: activeSlotStart,
+      endTime: activeSlotEnd,
+      targetDeficitMW: 20.0,
+      actualDeficitMW: 20.0,
+      createdAt: nowTime.toISOString()
+    });
+
+    store.scheduleFeederAssignments.set(liveTestAsgnId, {
+      id: liveTestAsgnId,
+      slotId: liveTestSlotId,
+      feederId: 'fdr_mir_1',
+      loadMW: 20.0,
+      createdAt: nowTime.toISOString()
+    });
+
+    // Query feeders -> fdr_mir_1 must dynamically evaluate to PLANNED_OUTAGE
+    const mirFeedersSchedRes = await request(serverUrl, 'GET', '/api/v1/feeders?zoneId=zn_mirpur');
+    const mirFeeder1 = mirFeedersSchedRes.body.data.find((f: any) => f.id === 'fdr_mir_1');
+    assert(
+      mirFeeder1 &&
+      mirFeeder1.effectiveStatus === 'PLANNED_OUTAGE' &&
+      mirFeeder1.activeOutage &&
+      mirFeeder1.activeOutage.type === 'PLANNED',
+      'Dynamic State Engine: Active schedule slot dynamically sets effectiveStatus to PLANNED_OUTAGE'
+    );
+
+    // 19d. Fault Precedence Rule Verification: Hardware Fault Overrides PLANNED_OUTAGE
+    // Inject active unexpected OutageTicket on fdr_mir_1
+    const testFaultTicketId = `tkt_test_precedence_${Date.now()}`;
+    store.outageTickets.set(testFaultTicketId, {
+      id: testFaultTicketId,
+      ticketNumber: 'TKT-PRECEDENCE-001',
+      customerId: 'usr_cust_1',
+      meterId: 'mtr_mir_201',
+      feederId: 'fdr_mir_1',
+      description: 'Physical transformer explosion during scheduled cut',
+      isPlanned: false,
+      status: OutageStatus.REPORTED,
+      reportedAt: nowTime.toISOString(),
+      createdAt: nowTime.toISOString(),
+      updatedAt: nowTime.toISOString()
+    });
+
+    const mirFeedersFaultRes = await request(serverUrl, 'GET', '/api/v1/feeders?zoneId=zn_mirpur');
+    const mirFeeder1WithFault = mirFeedersFaultRes.body.data.find((f: any) => f.id === 'fdr_mir_1');
+    assert(
+      mirFeeder1WithFault &&
+      mirFeeder1WithFault.effectiveStatus === 'UNEXPECTED_FAULT' &&
+      mirFeeder1WithFault.activeOutage &&
+      mirFeeder1WithFault.activeOutage.type === 'UNPLANNED',
+      'Fault Precedence Rule: Active hardware fault strictly overrides PLANNED_OUTAGE to UNEXPECTED_FAULT'
+    );
+
+    // 19e. Public Load Shedding Schedules Portal (Endpoint 20)
+    const publicSchedulesRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/schedules/public?date=${todayStr}&zoneId=zn_mirpur`
+    );
+    assert(
+      publicSchedulesRes.status === 200 &&
+      publicSchedulesRes.body.success === true &&
+      publicSchedulesRes.body.data.date === todayStr &&
+      Array.isArray(publicSchedulesRes.body.data.slots) &&
+      publicSchedulesRes.body.data.slots.length >= 1,
+      'GET /api/v1/schedules/public returns published schedule slots for citizen portal'
+    );
+    const assignedMirFeederInSlot = publicSchedulesRes.body.data.slots[0].assignedFeeders.find(
+      (f: any) => f.id === 'fdr_mir_1'
+    );
+    assert(
+      assignedMirFeederInSlot !== undefined &&
+      assignedMirFeederInSlot.name === 'Mirpur 10 Circle Feeder',
+      'GET /api/v1/schedules/public enriches slot with assigned feeder metadata'
+    );
+
+    // Verify cache hit on second query
+    const cachedPublicSchedulesRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/schedules/public?date=${todayStr}&zoneId=zn_mirpur`
+    );
+    assert(
+      cachedPublicSchedulesRes.status === 200 &&
+      cachedPublicSchedulesRes.body.data.slots.length >= 1,
+      'GET /api/v1/schedules/public returns identical payload from cache'
+    );
+
+    // 19f. Operator Grid Overview (Endpoint 30) & Active Outages (Endpoint 37)
+    // 19f-1: RBAC Enforcement - Customer blocked from Operator Control Room
+    const rbacOperatorOverviewRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/grid-overview',
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      rbacOperatorOverviewRes.status === 403 &&
+      rbacOperatorOverviewRes.body.error.code === 'FORBIDDEN',
+      'RBAC: Customer blocked from accessing operator grid overview (403 FORBIDDEN)'
+    );
+
+    // 19f-2: Power Operator queries Grid Overview (Endpoint 30)
+    const operatorOverviewRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/grid-overview',
+      undefined,
+      opToken
+    );
+    assert(
+      operatorOverviewRes.status === 200 &&
+      operatorOverviewRes.body.success === true &&
+      operatorOverviewRes.body.data.metrics.totalDemandMW > 0 &&
+      operatorOverviewRes.body.data.metrics.currentDeficitMW >= 0 &&
+      operatorOverviewRes.body.data.feederCounts.total >= 4 &&
+      operatorOverviewRes.body.data.feederCounts.unexpectedFault >= 1 &&
+      operatorOverviewRes.body.data.feederCounts.criticalExempt >= 1 &&
+      Array.isArray(operatorOverviewRes.body.data.zoneBreakdown),
+      'GET /api/v1/operator/grid-overview computes real-time SCADA telemetry, deficit, feeder health, and zone breakdowns'
+    );
+
+    // 19f-3: Power Operator queries Active Offline Outages (Endpoint 37)
+    const activeOutagesRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/outages/active',
+      undefined,
+      opToken
+    );
+    assert(
+      activeOutagesRes.status === 200 &&
+      activeOutagesRes.body.success === true &&
+      Array.isArray(activeOutagesRes.body.data.items) &&
+      activeOutagesRes.body.data.items.length >= 1,
+      'GET /api/v1/operator/outages/active lists currently offline feeders across planned and unplanned incidents'
+    );
+    const offlineItemMir1 = activeOutagesRes.body.data.items.find(
+      (item: any) => item.feederId === 'fdr_mir_1'
+    );
+    assert(
+      offlineItemMir1 &&
+      offlineItemMir1.outageType === 'UNPLANNED' &&
+      offlineItemMir1.ticket &&
+      offlineItemMir1.ticket.ticketNumber === 'TKT-PRECEDENCE-001' &&
+      offlineItemMir1.impactedMetersCount >= 1,
+      'GET /api/v1/operator/outages/active enriches offline feeder with incident details and impacted customer meters'
+    );
+
+    // Filter by outageType=UNPLANNED
+    const unplannedOnlyRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/outages/active?outageType=UNPLANNED',
+      undefined,
+      opToken
+    );
+    assert(
+      unplannedOnlyRes.status === 200 &&
+      unplannedOnlyRes.body.data.items.every((i: any) => i.outageType === 'UNPLANNED'),
+      'GET /api/v1/operator/outages/active?outageType=UNPLANNED correctly filters offline feeders'
+    );
+
+    // Clean up temporary live test schedule and fault ticket
+    store.outageTickets.delete(testFaultTicketId);
+    store.scheduleFeederAssignments.delete(liveTestAsgnId);
+    store.scheduleSlots.delete(liveTestSlotId);
+    store.schedules.delete(liveTestSchedId);
 
   } catch (err: any) {
     logger.error('Test execution error:', err);
