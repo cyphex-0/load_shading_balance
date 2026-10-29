@@ -17,8 +17,8 @@ export class AppError extends Error {
 
 // Domain-specific error taxonomy
 export class BadRequestError extends AppError {
-  constructor(message = 'Bad request', details?: any[]) {
-    super(message, 400, 'BAD_REQUEST', details);
+  constructor(message = 'Bad request', code = 'BAD_REQUEST', details?: any[]) {
+    super(message, 400, code, details);
     Object.setPrototypeOf(this, BadRequestError.prototype);
   }
 }
