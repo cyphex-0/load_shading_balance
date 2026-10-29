@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { linkMeterSchema, reportOutageSchema, UserRole } from '@load-shedding/shared';
 import { store, CustomerMeterRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError, NotFoundError } from '../utils/response';
+import { successResponse, AppError, NotFoundError, ConflictError, BadRequestError } from '../utils/response';
 import { conflictResolutionService } from '../services/conflict.service';
 import { cacheService } from '../services/cache.service';
 
@@ -177,7 +177,7 @@ customerRouter.get('/customers/me/meters', custAuth, (req: any, res) => {
   return successResponse(res, meters);
 });
 
-// Endpoint 25: POST /api/customers/me/meters (and /api/v1/customers/me/location)
+// Endpoint 21: POST /api/customers/me/meters (and /api/v1/customers/me/location)
 const handleLinkMeter = (req: any, res: any, next: any) => {
   try {
     const data = linkMeterSchema.parse(req.body);
@@ -187,22 +187,31 @@ const handleLinkMeter = (req: any, res: any, next: any) => {
       (m) => m.meterNumber.toLowerCase() === data.meterNumber.toLowerCase() && !m.deletedAt
     );
     if (!meter) {
-      throw new AppError('Meter number not registered in grid database', 404, 'METER_NOT_FOUND');
+      throw new NotFoundError('Meter number not registered in grid database', 'METER_NOT_FOUND');
     }
 
-    // Check if already linked to this customer
+    // Check if meter is actively linked across ANY customer account (exclusive physical binding)
     const existing = Array.from(store.customerMeters.values()).find(
-      (cm) => cm.customerId === req.user.sub && cm.meterId === meter.id && !cm.unlinkedAt
+      (cm) => cm.meterId === meter.id && !cm.unlinkedAt
     );
     if (existing) {
-      throw new AppError('Meter is already linked to your account', 400, 'METER_ALREADY_LINKED');
+      throw new ConflictError('Meter is already linked to an account', 'METER_ALREADY_LINKED');
     }
 
-    // Determine if this is the first meter (make it primary)
+    // Determine primary status: explicit preference or first meter defaults to primary
     const currentMeters = Array.from(store.customerMeters.values()).filter(
       (cm) => cm.customerId === req.user.sub && !cm.unlinkedAt
     );
-    const isPrimary = currentMeters.length === 0;
+    const isPrimary = data.isPrimary ?? (currentMeters.length === 0);
+
+    // If marked as primary, demote any existing primary meter for this customer
+    if (isPrimary && currentMeters.length > 0) {
+      for (const cm of currentMeters) {
+        if (cm.isPrimary) {
+          cm.isPrimary = false;
+        }
+      }
+    }
 
     const linkId = `cm_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const newLink: CustomerMeterRecord = {
@@ -223,6 +232,7 @@ const handleLinkMeter = (req: any, res: any, next: any) => {
         meterNumber: meter.meterNumber,
         address: meter.address,
         isPrimary: newLink.isPrimary,
+        nickname: newLink.nickname,
         linkedAt: newLink.linkedAt
       },
       201
@@ -235,15 +245,131 @@ const handleLinkMeter = (req: any, res: any, next: any) => {
 customerRouter.post('/customers/me/meters', custAuth, handleLinkMeter);
 customerRouter.patch('/v1/customers/me/location', custAuth, handleLinkMeter);
 
-// Endpoint 26: DELETE /api/customers/me/meters/:id
+// Endpoint 23: DELETE /api/customers/me/meters/:id
 customerRouter.delete('/customers/me/meters/:id', custAuth, (req: any, res) => {
   const link = store.customerMeters.get(req.params.id);
   if (!link || link.customerId !== req.user.sub || link.unlinkedAt) {
     throw new NotFoundError('Meter link not found', 'LINK_NOT_FOUND');
   }
 
+  const wasPrimary = link.isPrimary;
   link.unlinkedAt = new Date().toISOString();
+  link.isPrimary = false;
+
+  // Auto-promote oldest remaining active meter to primary
+  if (wasPrimary) {
+    const remaining = Array.from(store.customerMeters.values())
+      .filter((cm) => cm.customerId === req.user.sub && !cm.unlinkedAt)
+      .sort((a, b) => new Date(a.linkedAt).getTime() - new Date(b.linkedAt).getTime());
+    if (remaining.length > 0) {
+      remaining[0].isPrimary = true;
+    }
+  }
+
   return successResponse(res, { message: 'Meter unlinked successfully' });
+});
+
+// Endpoint 24: GET /api/customers/me/meters/:id/status (Specific Meter Live Status)
+customerRouter.get('/customers/me/meters/:id/status', custAuth, (req: any, res) => {
+  const link = store.customerMeters.get(req.params.id);
+  if (!link || link.customerId !== req.user.sub || link.unlinkedAt) {
+    throw new NotFoundError('Meter link not found', 'LINK_NOT_FOUND');
+  }
+
+  const meter = store.meters.get(link.meterId);
+  if (!meter || meter.deletedAt) {
+    throw new NotFoundError('Meter not found in grid database', 'METER_NOT_FOUND');
+  }
+
+  const feeder = store.feeders.get(meter.feederId);
+  const sub = feeder ? store.substations.get(feeder.substationId) : null;
+  const zone = sub ? store.zones.get(sub.zoneId) : null;
+
+  return successResponse(res, {
+    linkId: link.id,
+    meterId: meter.id,
+    meterNumber: meter.meterNumber,
+    address: meter.address,
+    isPrimary: link.isPrimary,
+    nickname: link.nickname,
+    feederId: feeder?.id || null,
+    feederName: feeder?.name || 'Unknown Feeder',
+    feederCode: feeder?.code || 'UNK',
+    status: feeder?.status || 'ONLINE',
+    isCritical: feeder?.isCritical || false,
+    substationName: sub?.name || null,
+    zoneName: zone?.name || null,
+    updatedAt: feeder?.updatedAt || new Date().toISOString()
+  });
+});
+
+// Endpoint 25: GET /api/customers/me/meters/:id/schedules (Specific Meter Upcoming Schedules)
+customerRouter.get('/customers/me/meters/:id/schedules', custAuth, (req: any, res) => {
+  const link = store.customerMeters.get(req.params.id);
+  if (!link || link.customerId !== req.user.sub || link.unlinkedAt) {
+    throw new NotFoundError('Meter link not found', 'LINK_NOT_FOUND');
+  }
+
+  const meter = store.meters.get(link.meterId);
+  if (!meter || meter.deletedAt) {
+    throw new NotFoundError('Meter not found in grid database', 'METER_NOT_FOUND');
+  }
+
+  const feeder = store.feeders.get(meter.feederId);
+  if (!feeder) {
+    return successResponse(res, []);
+  }
+
+  // Find published schedule slots covering this meter's feeder
+  const publishedSchedules = Array.from(store.schedules.values()).filter(
+    (s) => s.status === 'PUBLISHED'
+  );
+
+  const relevantSlots: any[] = [];
+  for (const sched of publishedSchedules) {
+    const assignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+      (a) => a.feederId === feeder.id
+    );
+    for (const asg of assignments) {
+      const slot = store.scheduleSlots.get(asg.slotId);
+      if (slot && slot.scheduleId === sched.id) {
+        relevantSlots.push({
+          scheduleId: sched.id,
+          planningDate: sched.planningDate,
+          slotId: slot.id,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          feederId: feeder.id,
+          feederName: feeder.name
+        });
+      }
+    }
+  }
+
+  return successResponse(res, relevantSlots);
+});
+
+// Designate Primary Meter: PATCH /api/customers/me/meters/:id/primary
+customerRouter.patch('/customers/me/meters/:id/primary', custAuth, (req: any, res) => {
+  const link = store.customerMeters.get(req.params.id);
+  if (!link || link.customerId !== req.user.sub || link.unlinkedAt) {
+    throw new NotFoundError('Meter link not found', 'LINK_NOT_FOUND');
+  }
+
+  // Demote existing primary meters
+  for (const cm of store.customerMeters.values()) {
+    if (cm.customerId === req.user.sub && !cm.unlinkedAt && cm.isPrimary) {
+      cm.isPrimary = false;
+    }
+  }
+
+  link.isPrimary = true;
+  return successResponse(res, {
+    id: link.id,
+    meterId: link.meterId,
+    isPrimary: link.isPrimary,
+    message: 'Meter set as primary successfully'
+  });
 });
 
 // Endpoint 27: POST /api/customers/me/outage-reports (Smart Conflict Resolution)
