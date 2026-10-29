@@ -59,17 +59,17 @@ const logAudit = (actorId: string, action: string, entity: string, entityId?: st
 };
 
 // ==========================================
-// 1. ZONE MANAGEMENT (Endpoints 52 - 56)
+// 1. ZONE MANAGEMENT (Endpoints 59 - 63)
 // ==========================================
 
-// Endpoint 52: POST /api/admin/zones
+// Endpoint 59: POST /api/admin/zones
 adminRouter.post('/admin/zones', (req: any, res, next) => {
   try {
     const data = createZoneSchema.parse(req.body);
     const existing = Array.from(store.zones.values()).find(
       (z) => (z.name.toLowerCase() === data.name.toLowerCase() || z.code.toUpperCase() === data.code.toUpperCase()) && !z.deletedAt
     );
-    if (existing) throw new AppError('Zone with this name or code already exists', 409, 'ZONE_EXISTS');
+    if (existing) throw new ConflictError('Zone with this name or code already exists', 'ZONE_EXISTS');
 
     const id = `zn_${Date.now()}`;
     const now = new Date().toISOString();
@@ -90,7 +90,7 @@ adminRouter.post('/admin/zones', (req: any, res, next) => {
   }
 });
 
-// Endpoint 53: GET /api/admin/zones
+// Endpoint 60: GET /api/admin/zones
 adminRouter.get('/admin/zones', (req, res) => {
   let zones = Array.from(store.zones.values())
     .filter((z) => !z.deletedAt)
@@ -117,19 +117,44 @@ adminRouter.get('/admin/zones', (req, res) => {
   return successResponse(res, zones);
 });
 
-// Endpoint 54: GET /api/admin/zones/:id
+// Endpoint 61: GET /api/admin/zones/:id
 adminRouter.get('/admin/zones/:id', (req, res) => {
   const zone = store.zones.get(req.params.id);
-  if (!zone || zone.deletedAt) throw new AppError('Zone not found', 404, 'ZONE_NOT_FOUND');
-  return successResponse(res, zone);
+  if (!zone || zone.deletedAt) throw new NotFoundError('Zone not found', 'ZONE_NOT_FOUND');
+
+  const activeSubs = Array.from(store.substations.values())
+    .filter((s) => s.zoneId === zone.id && !s.deletedAt)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      code: s.code,
+      capacityMW: s.capacityMW
+    }));
+
+  return successResponse(res, {
+    ...zone,
+    substationsCount: activeSubs.length,
+    substations: activeSubs
+  });
 });
 
-// Endpoint 55: PATCH /api/admin/zones/:id
+// Endpoint 62: PATCH /api/admin/zones/:id
 adminRouter.patch('/admin/zones/:id', (req: any, res, next) => {
   try {
     const data = updateZoneSchema.parse(req.body);
     const zone = store.zones.get(req.params.id);
-    if (!zone || zone.deletedAt) throw new AppError('Zone not found', 404, 'ZONE_NOT_FOUND');
+    if (!zone || zone.deletedAt) throw new NotFoundError('Zone not found', 'ZONE_NOT_FOUND');
+
+    if (data.name || data.code) {
+      const collision = Array.from(store.zones.values()).find(
+        (z) =>
+          z.id !== zone.id &&
+          !z.deletedAt &&
+          ((data.name && z.name.toLowerCase() === data.name.toLowerCase()) ||
+            (data.code && z.code.toUpperCase() === data.code.toUpperCase()))
+      );
+      if (collision) throw new ConflictError('Zone with this name or code already exists', 'ZONE_EXISTS');
+    }
 
     if (data.name) zone.name = data.name;
     if (data.code) zone.code = data.code.toUpperCase();
@@ -143,10 +168,16 @@ adminRouter.patch('/admin/zones/:id', (req: any, res, next) => {
   }
 });
 
-// Endpoint 56: DELETE /api/admin/zones/:id
+// Endpoint 63: DELETE /api/admin/zones/:id
 adminRouter.delete('/admin/zones/:id', (req: any, res) => {
   const zone = store.zones.get(req.params.id);
-  if (!zone || zone.deletedAt) throw new AppError('Zone not found', 404, 'ZONE_NOT_FOUND');
+  if (!zone || zone.deletedAt) throw new NotFoundError('Zone not found', 'ZONE_NOT_FOUND');
+
+  // Referential Integrity: Block deletion if active substations exist
+  const activeSubs = Array.from(store.substations.values()).filter((s) => s.zoneId === zone.id && !s.deletedAt);
+  if (activeSubs.length > 0) {
+    throw new BadRequestError('Cannot delete zone with active substations. Reassign or remove substations first.', 'ACTIVE_SUBSTATIONS_EXIST');
+  }
 
   zone.deletedAt = new Date().toISOString();
   logAudit(req.user.sub, 'SOFT_DELETE_ZONE', 'Zone', zone.id);
@@ -154,15 +185,20 @@ adminRouter.delete('/admin/zones/:id', (req: any, res) => {
 });
 
 // ==========================================
-// 2. SUBSTATION MANAGEMENT (Endpoints 57 - 61)
+// 2. SUBSTATION MANAGEMENT (Endpoints 64 - 68)
 // ==========================================
 
-// Endpoint 57: POST /api/admin/substations
+// Endpoint 64: POST /api/admin/substations
 adminRouter.post('/admin/substations', (req: any, res, next) => {
   try {
     const data = createSubstationSchema.parse(req.body);
     const zone = store.zones.get(data.zoneId);
-    if (!zone || zone.deletedAt) throw new AppError('Zone not found', 404, 'ZONE_NOT_FOUND');
+    if (!zone || zone.deletedAt) throw new NotFoundError('Zone not found', 'ZONE_NOT_FOUND');
+
+    const existing = Array.from(store.substations.values()).find(
+      (s) => s.code.toUpperCase() === data.code.toUpperCase() && !s.deletedAt
+    );
+    if (existing) throw new ConflictError('Substation code already exists', 'SUBSTATION_EXISTS');
 
     const id = `sub_${Date.now()}`;
     const now = new Date().toISOString();
@@ -184,29 +220,85 @@ adminRouter.post('/admin/substations', (req: any, res, next) => {
   }
 });
 
-// Endpoint 58: GET /api/admin/substations
+// Endpoint 65: GET /api/admin/substations
 adminRouter.get('/admin/substations', (req, res) => {
   const zoneId = req.query.zoneId as string;
   let subs = Array.from(store.substations.values()).filter((s) => !s.deletedAt);
+
   if (zoneId) {
     subs = subs.filter((s) => s.zoneId === zoneId);
   }
-  return successResponse(res, subs);
+
+  if (req.query.search) {
+    const q = (req.query.search as string).toLowerCase();
+    subs = subs.filter((s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q));
+  }
+
+  const enriched = subs.map((s) => {
+    const z = store.zones.get(s.zoneId);
+    const feeders = Array.from(store.feeders.values()).filter((f) => f.substationId === s.id && !f.deletedAt);
+    return {
+      ...s,
+      zone: z && !z.deletedAt ? { id: z.id, name: z.name, code: z.code } : null,
+      feedersCount: feeders.length
+    };
+  });
+
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = enriched.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, enriched.length, page, pageSize);
+  }
+
+  return successResponse(res, enriched);
 });
 
-// Endpoint 59: GET /api/admin/substations/:id
+// Endpoint 66: GET /api/admin/substations/:id
 adminRouter.get('/admin/substations/:id', (req, res) => {
   const sub = store.substations.get(req.params.id);
-  if (!sub || sub.deletedAt) throw new AppError('Substation not found', 404, 'SUBSTATION_NOT_FOUND');
-  return successResponse(res, sub);
+  if (!sub || sub.deletedAt) throw new NotFoundError('Substation not found', 'SUBSTATION_NOT_FOUND');
+
+  const z = store.zones.get(sub.zoneId);
+  const activeFeeders = Array.from(store.feeders.values())
+    .filter((f) => f.substationId === sub.id && !f.deletedAt)
+    .map((f) => ({
+      id: f.id,
+      name: f.name,
+      code: f.code,
+      capacityMW: f.capacityMW,
+      isCritical: f.isCritical,
+      status: f.status
+    }));
+
+  return successResponse(res, {
+    ...sub,
+    zone: z && !z.deletedAt ? { id: z.id, name: z.name, code: z.code } : null,
+    feedersCount: activeFeeders.length,
+    feeders: activeFeeders
+  });
 });
 
-// Endpoint 60: PATCH /api/admin/substations/:id
+// Endpoint 67: PATCH /api/admin/substations/:id
 adminRouter.patch('/admin/substations/:id', (req: any, res, next) => {
   try {
     const data = updateSubstationSchema.parse(req.body);
     const sub = store.substations.get(req.params.id);
-    if (!sub || sub.deletedAt) throw new AppError('Substation not found', 404, 'SUBSTATION_NOT_FOUND');
+    if (!sub || sub.deletedAt) throw new NotFoundError('Substation not found', 'SUBSTATION_NOT_FOUND');
+
+    if (data.zoneId) {
+      const targetZone = store.zones.get(data.zoneId);
+      if (!targetZone || targetZone.deletedAt) {
+        throw new NotFoundError('Zone not found', 'ZONE_NOT_FOUND');
+      }
+    }
+
+    if (data.code && data.code.toUpperCase() !== sub.code) {
+      const collision = Array.from(store.substations.values()).find(
+        (s) => s.id !== sub.id && !s.deletedAt && s.code.toUpperCase() === data.code!.toUpperCase()
+      );
+      if (collision) throw new ConflictError('Substation code already exists', 'SUBSTATION_EXISTS');
+    }
 
     if (data.name) sub.name = data.name;
     if (data.code) sub.code = data.code.toUpperCase();
@@ -221,10 +313,16 @@ adminRouter.patch('/admin/substations/:id', (req: any, res, next) => {
   }
 });
 
-// Endpoint 61: DELETE /api/admin/substations/:id
+// Endpoint 68: DELETE /api/admin/substations/:id
 adminRouter.delete('/admin/substations/:id', (req: any, res) => {
   const sub = store.substations.get(req.params.id);
-  if (!sub || sub.deletedAt) throw new AppError('Substation not found', 404, 'SUBSTATION_NOT_FOUND');
+  if (!sub || sub.deletedAt) throw new NotFoundError('Substation not found', 'SUBSTATION_NOT_FOUND');
+
+  // Referential Integrity: Block deletion if active feeders exist
+  const activeFeeders = Array.from(store.feeders.values()).filter((f) => f.substationId === sub.id && !f.deletedAt);
+  if (activeFeeders.length > 0) {
+    throw new BadRequestError('Cannot delete substation with active feeders. Reassign or remove feeders first.', 'ACTIVE_FEEDERS_EXIST');
+  }
 
   sub.deletedAt = new Date().toISOString();
   logAudit(req.user.sub, 'SOFT_DELETE_SUBSTATION', 'Substation', sub.id);
@@ -232,15 +330,20 @@ adminRouter.delete('/admin/substations/:id', (req: any, res) => {
 });
 
 // ==========================================
-// 3. FEEDER MANAGEMENT (Endpoints 62 - 67)
+// 3. FEEDER MANAGEMENT (Endpoints 69 - 73)
 // ==========================================
 
-// Endpoint 62: POST /api/admin/feeders
+// Endpoint 69: POST /api/admin/feeders
 adminRouter.post('/admin/feeders', (req: any, res, next) => {
   try {
     const data = createFeederSchema.parse(req.body);
     const sub = store.substations.get(data.substationId);
-    if (!sub || sub.deletedAt) throw new AppError('Substation not found', 404, 'SUBSTATION_NOT_FOUND');
+    if (!sub || sub.deletedAt) throw new NotFoundError('Substation not found', 'SUBSTATION_NOT_FOUND');
+
+    const existing = Array.from(store.feeders.values()).find(
+      (f) => f.code.toUpperCase() === data.code.toUpperCase() && !f.deletedAt
+    );
+    if (existing) throw new ConflictError('Feeder code already exists', 'FEEDER_EXISTS');
 
     const id = `fdr_${Date.now()}`;
     const now = new Date().toISOString();
@@ -264,9 +367,10 @@ adminRouter.post('/admin/feeders', (req: any, res, next) => {
   }
 });
 
-// Endpoint 63: GET /api/admin/feeders
+// Endpoint 70: GET /api/admin/feeders
 adminRouter.get('/admin/feeders', (req, res) => {
   const zoneId = req.query.zoneId as string;
+  const substationId = req.query.substationId as string;
   const isCritical = req.query.isCritical !== undefined ? req.query.isCritical === 'true' : undefined;
   const status = req.query.status as string;
 
@@ -279,6 +383,10 @@ adminRouter.get('/admin/feeders', (req, res) => {
     });
   }
 
+  if (substationId) {
+    feeders = feeders.filter((f) => f.substationId === substationId);
+  }
+
   if (isCritical !== undefined) {
     feeders = feeders.filter((f) => f.isCritical === isCritical);
   }
@@ -287,22 +395,63 @@ adminRouter.get('/admin/feeders', (req, res) => {
     feeders = feeders.filter((f) => f.status === status);
   }
 
-  return successResponse(res, feeders);
+  if (req.query.search) {
+    const q = (req.query.search as string).toLowerCase();
+    feeders = feeders.filter((f) => f.name.toLowerCase().includes(q) || f.code.toLowerCase().includes(q));
+  }
+
+  const enriched = feeders.map((f) => {
+    const sub = store.substations.get(f.substationId);
+    const z = sub ? store.zones.get(sub.zoneId) : null;
+    const meters = Array.from(store.meters.values()).filter((m) => m.feederId === f.id && !m.deletedAt);
+    return {
+      ...f,
+      substation: sub && !sub.deletedAt ? { id: sub.id, name: sub.name, code: sub.code } : null,
+      zone: z && !z.deletedAt ? { id: z.id, name: z.name, code: z.code } : null,
+      metersCount: meters.length
+    };
+  });
+
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = enriched.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, enriched.length, page, pageSize);
+  }
+
+  return successResponse(res, enriched);
 });
 
-// Endpoint 64: GET /api/admin/feeders/:id
+// Endpoint 71: GET /api/admin/feeders/:id
 adminRouter.get('/admin/feeders/:id', (req, res) => {
   const f = store.feeders.get(req.params.id);
-  if (!f || f.deletedAt) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
-  return successResponse(res, f);
+  if (!f || f.deletedAt) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
+
+  const sub = store.substations.get(f.substationId);
+  const z = sub ? store.zones.get(sub.zoneId) : null;
+  const meters = Array.from(store.meters.values()).filter((m) => m.feederId === f.id && !m.deletedAt);
+
+  return successResponse(res, {
+    ...f,
+    substation: sub && !sub.deletedAt ? { id: sub.id, name: sub.name, code: sub.code } : null,
+    zone: z && !z.deletedAt ? { id: z.id, name: z.name, code: z.code } : null,
+    metersCount: meters.length
+  });
 });
 
-// Endpoint 65: PATCH /api/admin/feeders/:id
+// Endpoint 72: PATCH /api/admin/feeders/:id
 adminRouter.patch('/admin/feeders/:id', (req: any, res, next) => {
   try {
     const data = updateFeederSchema.parse(req.body);
     const feeder = store.feeders.get(req.params.id);
-    if (!feeder || feeder.deletedAt) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
+    if (!feeder || feeder.deletedAt) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
+
+    if (data.code && data.code.toUpperCase() !== feeder.code) {
+      const collision = Array.from(store.feeders.values()).find(
+        (f) => f.id !== feeder.id && !f.deletedAt && f.code.toUpperCase() === data.code!.toUpperCase()
+      );
+      if (collision) throw new ConflictError('Feeder code already exists', 'FEEDER_EXISTS');
+    }
 
     if (data.name) feeder.name = data.name;
     if (data.code) feeder.code = data.code.toUpperCase();
@@ -318,12 +467,12 @@ adminRouter.patch('/admin/feeders/:id', (req: any, res, next) => {
   }
 });
 
-// Endpoint 66: PATCH /api/v1/admin/feeders/:id/critical (Toggle Critical Status)
+// Endpoint 73: PATCH /api/v1/admin/feeders/:id/critical (Toggle Critical Status)
 adminRouter.patch('/v1/admin/feeders/:id/critical', (req: any, res, next) => {
   try {
     const { isCritical } = toggleCriticalSchema.parse(req.body);
     const feeder = store.feeders.get(req.params.id);
-    if (!feeder || feeder.deletedAt) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
+    if (!feeder || feeder.deletedAt) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
 
     feeder.isCritical = isCritical;
     feeder.updatedAt = new Date().toISOString();
@@ -335,10 +484,16 @@ adminRouter.patch('/v1/admin/feeders/:id/critical', (req: any, res, next) => {
   }
 });
 
-// Endpoint 67: DELETE /api/admin/feeders/:id
+// Endpoint 74: DELETE /api/admin/feeders/:id
 adminRouter.delete('/admin/feeders/:id', (req: any, res) => {
   const feeder = store.feeders.get(req.params.id);
-  if (!feeder || feeder.deletedAt) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
+  if (!feeder || feeder.deletedAt) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
+
+  // Referential Integrity: Block deletion if active meters exist
+  const activeMeters = Array.from(store.meters.values()).filter((m) => m.feederId === feeder.id && !m.deletedAt);
+  if (activeMeters.length > 0) {
+    throw new BadRequestError('Cannot delete feeder with active meters.', 'ACTIVE_METERS_EXIST');
+  }
 
   feeder.deletedAt = new Date().toISOString();
   logAudit(req.user.sub, 'SOFT_DELETE_FEEDER', 'Feeder', feeder.id);
@@ -346,20 +501,20 @@ adminRouter.delete('/admin/feeders/:id', (req: any, res) => {
 });
 
 // ==========================================
-// 4. METER MANAGEMENT (Endpoints 68 - 71)
+// 4. METER MANAGEMENT (Endpoints 78 - 79)
 // ==========================================
 
-// Endpoint 68: POST /api/admin/meters
+// Endpoint 78: POST /api/admin/meters
 adminRouter.post('/admin/meters', (req: any, res, next) => {
   try {
     const data = createMeterSchema.parse(req.body);
     const existing = Array.from(store.meters.values()).find(
       (m) => m.meterNumber.toLowerCase() === data.meterNumber.toLowerCase() && !m.deletedAt
     );
-    if (existing) throw new AppError('Meter number already registered', 409, 'METER_EXISTS');
+    if (existing) throw new ConflictError('Meter number already registered', 'METER_EXISTS');
 
     const feeder = store.feeders.get(data.feederId);
-    if (!feeder || feeder.deletedAt) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
+    if (!feeder || feeder.deletedAt) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
 
     const id = `mtr_${Date.now()}`;
     const now = new Date().toISOString();
@@ -380,27 +535,78 @@ adminRouter.post('/admin/meters', (req: any, res, next) => {
   }
 });
 
-// Endpoint 69: GET /api/admin/meters
+// Endpoint 79: GET /api/admin/meters
 adminRouter.get('/admin/meters', (req, res) => {
   const feederId = req.query.feederId as string;
   let meters = Array.from(store.meters.values()).filter((m) => !m.deletedAt);
+
   if (feederId) {
     meters = meters.filter((m) => m.feederId === feederId);
   }
-  return successResponse(res, meters);
+
+  if (req.query.search) {
+    const q = (req.query.search as string).toLowerCase();
+    meters = meters.filter((m) => m.meterNumber.toLowerCase().includes(q) || m.address.toLowerCase().includes(q));
+  }
+
+  let enriched = meters.map((m) => {
+    const feeder = store.feeders.get(m.feederId);
+    const link = Array.from(store.customerMeters.values()).find((cm) => cm.meterId === m.id && !cm.unlinkedAt);
+    const customer = link ? store.users.get(link.customerId) : null;
+    return {
+      ...m,
+      feeder: feeder && !feeder.deletedAt ? { id: feeder.id, name: feeder.name, code: feeder.code } : null,
+      isLinked: !!link,
+      linkedCustomer: customer && !customer.deletedAt ? { id: customer.id, name: customer.name, email: customer.email } : null
+    };
+  });
+
+  if (req.query.isLinked !== undefined) {
+    const reqLinked = req.query.isLinked === 'true';
+    enriched = enriched.filter((m) => m.isLinked === reqLinked);
+  }
+
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = enriched.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, enriched.length, page, pageSize);
+  }
+
+  return successResponse(res, enriched);
 });
 
-// Endpoint 70: GET /api/admin/meters/:id
+// Endpoint 80: GET /api/admin/meters/:id
 adminRouter.get('/admin/meters/:id', (req, res) => {
   const m = store.meters.get(req.params.id);
-  if (!m || m.deletedAt) throw new AppError('Meter not found', 404, 'METER_NOT_FOUND');
-  return successResponse(res, m);
+  if (!m || m.deletedAt) throw new NotFoundError('Meter not found', 'METER_NOT_FOUND');
+
+  const feeder = store.feeders.get(m.feederId);
+  const sub = feeder ? store.substations.get(feeder.substationId) : null;
+  const zone = sub ? store.zones.get(sub.zoneId) : null;
+  const link = Array.from(store.customerMeters.values()).find((cm) => cm.meterId === m.id && !cm.unlinkedAt);
+  const customer = link ? store.users.get(link.customerId) : null;
+
+  return successResponse(res, {
+    ...m,
+    feeder: feeder && !feeder.deletedAt ? { id: feeder.id, name: feeder.name, code: feeder.code } : null,
+    substation: sub && !sub.deletedAt ? { id: sub.id, name: sub.name, code: sub.code } : null,
+    zone: zone && !zone.deletedAt ? { id: zone.id, name: zone.name, code: zone.code } : null,
+    isLinked: !!link,
+    linkedCustomer: customer && !customer.deletedAt ? { id: customer.id, name: customer.name, email: customer.email } : null
+  });
 });
 
-// Endpoint 71: DELETE /api/admin/meters/:id
+// Endpoint 81: DELETE /api/admin/meters/:id
 adminRouter.delete('/admin/meters/:id', (req: any, res) => {
   const m = store.meters.get(req.params.id);
-  if (!m || m.deletedAt) throw new AppError('Meter not found', 404, 'METER_NOT_FOUND');
+  if (!m || m.deletedAt) throw new NotFoundError('Meter not found', 'METER_NOT_FOUND');
+
+  // Referential Integrity: Block deletion if actively linked to a customer
+  const activeLink = Array.from(store.customerMeters.values()).find((cm) => cm.meterId === m.id && !cm.unlinkedAt);
+  if (activeLink) {
+    throw new BadRequestError('Cannot delete meter linked to active customer. Unlink meter first.', 'METER_LINKED_TO_CUSTOMER');
+  }
 
   m.deletedAt = new Date().toISOString();
   logAudit(req.user.sub, 'SOFT_DELETE_METER', 'Meter', m.id);
