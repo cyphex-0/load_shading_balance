@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # GridSync BD — Load Shedding & Power Outage Management System
 
 A centralized, full-stack, enterprise-grade electricity load-shedding and power outage management platform designed for national and metropolitan power distribution authorities (e.g. DPDC, DESCO, BPDB, BREB in Bangladesh, or other deficit-prone regions globally).
@@ -127,3 +128,14 @@ All 81 REST API endpoints defined in `endpoint.md` are implemented and active:
 8. **Zone Manager (8):** `GET /api/zone-managers/me/dashboard`, `GET /api/v1/manager/outages`, `GET /api/v1/manager/technicians`, `PATCH /api/v1/manager/outages/:id/assignment`, `GET /api/zone-managers/me/analytics/feeder-failure-rate`, `GET /api/zone-managers/me/analytics/avg-resolution-time`, `POST /api/infrastructure-requests`, `GET /api/infrastructure-requests`
 9. **System Admin (30):** Zones CRUD (5), Substations CRUD (5), Feeders CRUD + Critical Toggle (6), Meters CRUD (4), User Provisioning & Management (7), Upgrade Approvals (1), Audit Logs (1), Notification Delivery Logs (1).
 
+=======
+# load_shading_balance
+
+Load Shedding & Power Outage Management System
+
+## Overview
+A system for managing, scheduling, and balancing load shedding and power outages.
+
+---
+*Test update verified.*
+>>>>>>> 82b249ffc93e5c5b753256eca103184f4ab0b685

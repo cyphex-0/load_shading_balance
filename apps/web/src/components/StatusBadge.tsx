@@ -58,6 +58,17 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   }
 
   // 4. Ticket Statuses
+  if (normalized === 'REPORTED') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-amber-50 text-amber-800 border border-amber-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <Clock className="h-3 w-3 text-amber-700 shrink-0" />}
+        Reported (Awaiting Triage)
+      </span>
+    );
+  }
+
   if (normalized === 'PENDING') {
     return (
       <span
@@ -131,6 +142,61 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       >
         {showIcon && <XCircle className="h-3 w-3 text-rose-700 shrink-0" />}
         Rejected
+      </span>
+    );
+  }
+
+  if (normalized === 'CANCELLED') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-slate-100 text-slate-700 border border-slate-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <XCircle className="h-3 w-3 text-slate-500 shrink-0" />}
+        Cancelled
+      </span>
+    );
+  }
+
+  if (normalized === 'PUBLISHED') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <CheckCircle2 className="h-3 w-3 text-emerald-700 shrink-0" />}
+        Published
+      </span>
+    );
+  }
+
+  if (normalized === 'DRAFT') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-slate-100 text-slate-800 border border-slate-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <Clock className="h-3 w-3 text-slate-500 shrink-0" />}
+        Draft
+      </span>
+    );
+  }
+
+  if (normalized === 'ACTIVE') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <CheckCircle2 className="h-3 w-3 text-emerald-700 shrink-0" />}
+        Active
+      </span>
+    );
+  }
+
+  if (normalized === 'SUSPENDED') {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full bg-rose-50 text-rose-800 border border-rose-300 font-mono-numbers ${sizeClasses[size]}`}
+      >
+        {showIcon && <XCircle className="h-3 w-3 text-rose-700 shrink-0" />}
+        Suspended
       </span>
     );
   }

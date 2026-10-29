@@ -112,7 +112,7 @@ export const Navbar = () => {
         <nav className="hidden md:flex items-center gap-1.5">
           <Link
             href="/"
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
+            className={`min-h-[44px] inline-flex items-center px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
               pathname === '/'
                 ? 'text-amber-900 bg-amber-50 border border-amber-200'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -122,7 +122,7 @@ export const Navbar = () => {
           </Link>
           <Link
             href="/schedules"
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`min-h-[44px] inline-flex items-center px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors gap-1.5 ${
               pathname === '/schedules'
                 ? 'text-amber-900 bg-amber-50 border border-amber-200'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -133,7 +133,7 @@ export const Navbar = () => {
           </Link>
           <Link
             href="/about"
-            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+            className={`min-h-[44px] inline-flex items-center px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors gap-1.5 ${
               pathname === '/about'
                 ? 'text-amber-900 bg-amber-50 border border-amber-200'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
@@ -147,7 +147,7 @@ export const Navbar = () => {
           {user && (
             <Link
               href={getDashboardLink()}
-              className={`ml-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 ${
+              className={`ml-2 min-h-[44px] inline-flex items-center px-3.5 py-2 text-xs font-bold rounded-lg transition-colors gap-1.5 ${
                 pathname.startsWith('/customer') ||
                 pathname.startsWith('/operator') ||
                 pathname.startsWith('/technician') ||
@@ -190,7 +190,7 @@ export const Navbar = () => {
 
               <button
                 onClick={() => logout()}
-                className="h-9 w-9 rounded-lg flex items-center justify-center text-slate-500 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-500 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
                 title="Sign Out"
                 aria-label="Sign Out"
               >
@@ -201,13 +201,13 @@ export const Navbar = () => {
             <div className="flex items-center gap-2">
               <Link
                 href="/login"
-                className="px-3.5 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
+                className="min-h-[44px] inline-flex items-center px-3.5 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
               >
                 Sign In
               </Link>
               <Link
                 href="/register"
-                className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
+                className="min-h-[44px] inline-flex items-center px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
               >
                 Register
               </Link>
@@ -217,7 +217,7 @@ export const Navbar = () => {
           {/* Mobile Menu Toggle Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100 border border-slate-200"
+            className="md:hidden min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 border border-slate-200"
             aria-label="Toggle navigation menu"
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}

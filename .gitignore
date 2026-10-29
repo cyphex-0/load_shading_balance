@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Dependencies
 node_modules/
 .pnp/
@@ -42,4 +43,8 @@ Thumbs.db
 # Uploads
 apps/api/uploads/*
 !apps/api/uploads/.gitkeep
+=======
+don't_add_git/
+don't add git/
+>>>>>>> 82b249ffc93e5c5b753256eca103184f4ab0b685
 

@@ -13,7 +13,7 @@ const config: Config = {
           online: '#10b981', // Emerald 500
           planned: '#f59e0b', // Amber 500
           fault: '#ef4444', // Red 500
-          dark: '#0f172a', // Slate 900
+          surface: '#ffffff', // Clean white
           light: '#f8fafc' // Slate 50
         }
       }
