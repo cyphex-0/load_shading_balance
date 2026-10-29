@@ -4,10 +4,16 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
+  if (!process.env.DATABASE_URL) {
+    console.log('⚠️ [SEED NOTICE] DATABASE_URL is not set. Seeding skipped for PostgreSQL (in-memory store is pre-seeded for local tests).');
+    return;
+  }
+
   console.log('🌱 Seeding PostgreSQL database with initial grid hierarchy and test users...');
 
+  const defaultPassword = process.env.SEED_DEFAULT_PASSWORD || 'Password123!';
   const salt = bcrypt.genSaltSync(10);
-  const passwordHash = bcrypt.hashSync('Password123!', salt);
+  const passwordHash = bcrypt.hashSync(defaultPassword, salt);
 
   // 1. Zones
   const zoneDhanmondi = await prisma.zone.upsert({
@@ -200,4 +206,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

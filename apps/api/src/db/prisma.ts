@@ -36,3 +36,7 @@ export const disconnectDatabase = async (): Promise<void> => {
     logger.warn('Database disconnect warning:', error?.message);
   }
 };
+
+// Re-export transaction and query helpers for unified database access
+export * from './transactions';
+export * from './helpers';

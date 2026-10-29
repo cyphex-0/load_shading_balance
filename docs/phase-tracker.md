@@ -13,7 +13,7 @@ This document tracks implementation progress across all 26 phases of the **Load 
 | **2** | Backend Package, TypeScript, Test Runner, and CI Baseline | **VERIFIED** | CI workflow `.github/workflows/backend-ci.yml`, `typecheck` script, `apps/api/README.md` |
 | **3** | Environment Validation, Logging, Security Defaults, and HTTP Bootstrap | **VERIFIED** | Zod env parsing (`env.ts`), correlation requestId, security headers, graceful shutdown, health probes |
 | **4** | Base Prisma Schema and Relational Grid Hierarchy | **VERIFIED** | `apps/api/prisma/schema.prisma` with 21 models, canonical `docs/database.md`, ERD, and foreign key rules ($\text{Zone} \to \text{Substation} \to \text{Feeder} \to \text{Meter} \to \text{CustomerMeter}$) |
-| **5** | Database Access Layer, Transactions, Seed Data, and Test Fixtures | **VERIFIED** | `apps/api/src/db/store.ts` (in-memory mock store) & `prisma/seed.ts` |
+| **5** | Database Access Layer, Transactions, Seed Data, and Test Fixtures | **VERIFIED** | `transactions.ts` (deadlock retry), `helpers.ts` (soft-delete, `toSafeUser`), idempotent `seed.ts`, `store.reset()`, `fixtures.ts`, and `docs/database-access.md` |
 | **6** | Validation, Pagination, API Errors, and Shared HTTP Contracts | **VERIFIED** | `packages/shared/src/validators.ts`, standard JSON response envelopes in `response.ts` |
 | **7** | Authentication APIs and Auth.js / Express Integration | **VERIFIED** | Register, login, refresh, me endpoints in `auth.router.ts` & `auth.ts` middleware |
 | **8** | RBAC, Resource Ownership, and Zone-Scope Authorization | **VERIFIED** | `requireRole` & `verifyZoneScope` middleware, tested in `runner.ts` (403 assertion) |

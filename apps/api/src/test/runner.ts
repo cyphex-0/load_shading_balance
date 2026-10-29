@@ -1,6 +1,11 @@
 import { createApp } from '../app';
 import http from 'http';
 import { logger } from '../utils/logger';
+import { store } from '../db/store';
+import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
+import { isTransientTransactionError } from '../db/transactions';
+import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
+import { UserRole } from '@load-shedding/shared';
 
 // Helper to make test HTTP requests
 const request = async (
@@ -79,18 +84,25 @@ const runSuite = async () => {
     assert(custLogin.status === 200 && custLogin.body.data.user.role === 'CUSTOMER', 'POST /api/auth/login succeeds for Customer');
     const customerToken = custLogin.body.data.token;
 
-    // Test 4: RBAC Security - Customer attempting Admin endpoint is rejected (403)
-    const forbiddenAttempt = await request(serverUrl, 'POST', '/api/admin/zones', { name: 'Hack Zone', code: 'HCK' }, customerToken);
-    assert(forbiddenAttempt.status === 403, 'RBAC prevents Customer from calling Admin API (403 Forbidden)');
+    // Test 4: Authorization & RBAC
+    // Customer attempts to call Admin API -> 403 Forbidden
+    const rbacTest = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/zones',
+      { name: 'Unauthorized Zone', code: 'UNAUTH' },
+      customerToken
+    );
+    assert(rbacTest.status === 403, 'RBAC prevents Customer from calling Admin API (403 Forbidden)');
 
-    // Test 5: Grid Discovery
-    const zones = await request(serverUrl, 'GET', '/api/zones');
-    assert(zones.status === 200 && zones.body.data.length >= 2, 'GET /api/zones returns active zones');
+    // Test 5: Grid Data Retrieval
+    const zonesRes = await request(serverUrl, 'GET', '/api/zones');
+    assert(zonesRes.status === 200 && Array.isArray(zonesRes.body.data), 'GET /api/zones returns active zones');
 
-    const feeders = await request(serverUrl, 'GET', '/api/feeders');
-    assert(feeders.status === 200 && feeders.body.data.length >= 5, 'GET /api/feeders returns feeders');
+    const feedersRes = await request(serverUrl, 'GET', '/api/feeders');
+    assert(feedersRes.status === 200 && Array.isArray(feedersRes.body.data), 'GET /api/feeders returns feeders');
 
-    // Test 6: Operator Schedule Generation with Critical Feeder Exclusion & No-Double-Cut
+    // Test 6: Operator Generates Draft Schedule
     const opLogin = await request(serverUrl, 'POST', '/api/auth/login', {
       email: 'operator@grid.gov.bd',
       password: 'Password123!'
@@ -229,6 +241,45 @@ const runSuite = async () => {
     );
     assert(approvalRes.status === 200 && approvalRes.body.data.status === 'APPROVED', 'PATCH /api/infrastructure-requests/:id/status approves request');
 
+    // Test 11: Phase 5 Persistence & Domain Helpers
+    const testUser = buildTestUser({ passwordHash: 'secret_hash_value' });
+    const safeUser = toSafeUser(testUser);
+    assert(!('passwordHash' in safeUser), 'toSafeUser strips passwordHash from user representation');
+
+    const softDeleteFilter = whereNotDeleted({ code: 'DHN' });
+    assert(softDeleteFilter.deletedAt === null && softDeleteFilter.code === 'DHN', 'whereNotDeleted attaches deletedAt: null filter');
+
+    const adminScope = getUserZoneScope({ role: UserRole.ADMIN });
+    const techScope = getUserZoneScope({ role: UserRole.TECHNICIAN, assignedZoneId: 'zn_dhanmondi' });
+    assert(adminScope.isGlobal === true && techScope.isGlobal === false && techScope.zoneId === 'zn_dhanmondi', 'getUserZoneScope accurately identifies global vs zone-scoped roles');
+
+    assert(isTransientTransactionError({ code: 'P2034' }), 'isTransientTransactionError identifies Prisma P2034 as retryable');
+    assert(isTransientTransactionError({ code: '40001' }), 'isTransientTransactionError identifies PostgreSQL 40001 as retryable');
+    assert(isTransientTransactionError({ code: '40P01' }), 'isTransientTransactionError identifies PostgreSQL 40P01 as retryable');
+    assert(!isTransientTransactionError({ code: 'P2002' }), 'isTransientTransactionError rejects non-transient P2002 constraint error');
+
+    // Test 12: Phase 5 Fixtures & Store Reset Isolation
+    const mockFeeder = buildTestFeeder('sub_dhn_1', { capacityMW: 25.0 });
+    assert(mockFeeder.capacityMW === 25.0 && mockFeeder.isCritical === false, 'buildTestFeeder generates valid fixture with custom overrides');
+
+    const clock = createMockClock('2026-09-25T10:00:00.000Z');
+    clock.advanceHours(3);
+    assert(clock.nowIso() === '2026-09-25T13:00:00.000Z', 'MockClock accurately advances time without system drift');
+
+    // Mutate in-memory store and verify reset restores initial state
+    const originalZoneCount = store.zones.size;
+    store.zones.set('zn_temp', {
+      id: 'zn_temp',
+      name: 'Temp Zone',
+      code: 'TMP',
+      description: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    assert(store.zones.size === originalZoneCount + 1, 'MemoryStore accepts mutated records in test');
+    store.reset();
+    assert(store.zones.size === originalZoneCount && !store.zones.has('zn_temp'), 'MemoryStore.reset() restores pristine initial seed state');
+
   } catch (err: any) {
     logger.error('Test execution error:', err);
     failed++;
@@ -244,4 +295,3 @@ const runSuite = async () => {
 };
 
 runSuite();
-

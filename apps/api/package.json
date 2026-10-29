@@ -12,6 +12,9 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "test": "tsx src/test/runner.ts"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@load-shedding/shared": "*",
     "@prisma/client": "^5.15.0",

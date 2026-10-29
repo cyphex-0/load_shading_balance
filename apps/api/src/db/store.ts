@@ -246,6 +246,39 @@ export class MemoryStore {
     this.seedInitialData();
   }
 
+  /**
+   * Resets all in-memory collections to the initial pristine seed state.
+   * Strictly prohibited in production environments.
+   */
+  public reset(): void {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('[SECURITY ERROR] Cannot reset MemoryStore in production environment.');
+    }
+
+    this.users.clear();
+    this.verificationTokens.clear();
+    this.passwordResetTokens.clear();
+    this.zones.clear();
+    this.substations.clear();
+    this.feeders.clear();
+    this.meters.clear();
+    this.customerMeters.clear();
+    this.schedules.clear();
+    this.scheduleSlots.clear();
+    this.scheduleFeederAssignments.clear();
+    this.outageTickets.clear();
+    this.technicianAssignments.clear();
+    this.outageAttachments.clear();
+    this.outageStatusHistories.clear();
+    this.infrastructureRequests.clear();
+    this.notifications.clear();
+    this.notificationDeliveryLogs.clear();
+    this.auditLogs.clear();
+    this.gridMetrics = [];
+
+    this.seedInitialData();
+  }
+
   private seedInitialData() {
     const salt = bcrypt.genSaltSync(10);
     const defaultPasswordHash = bcrypt.hashSync('Password123!', salt);
