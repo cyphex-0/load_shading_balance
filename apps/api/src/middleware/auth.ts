@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { UserRole, JwtPayload } from '@load-shedding/shared';
-import { AppError } from '../utils/response';
+import { AppError, UnauthorizedError, ForbiddenError } from '../utils/response';
 import { store } from '../db/store';
 
 // Extend Express Request
@@ -27,7 +27,7 @@ export const authenticateUser = (req: Request, res: Response, next: NextFunction
     }
 
     if (!token) {
-      return next(new AppError('Authentication required. No session token provided.', 401, 'UNAUTHORIZED'));
+      return next(new UnauthorizedError('Authentication required. No session token provided.', 'UNAUTHORIZED'));
     }
 
     const decoded = jwt.verify(token, config.authSecret) as JwtPayload;
@@ -35,12 +35,12 @@ export const authenticateUser = (req: Request, res: Response, next: NextFunction
     // Check if user account is suspended or deleted in store
     const user = store.users.get(decoded.sub);
     if (!user || user.deletedAt) {
-      return next(new AppError('User account not found', 401, 'USER_NOT_FOUND'));
+      return next(new UnauthorizedError('User account not found', 'USER_NOT_FOUND'));
     }
 
     if (user.status === 'SUSPENDED') {
       return next(
-        new AppError('Your account has been suspended by an administrator', 403, 'ACCOUNT_SUSPENDED')
+        new ForbiddenError('Your account has been suspended by an administrator', 'ACCOUNT_SUSPENDED')
       );
     }
 
@@ -48,23 +48,22 @@ export const authenticateUser = (req: Request, res: Response, next: NextFunction
     next();
   } catch (err: any) {
     if (err.name === 'TokenExpiredError') {
-      return next(new AppError('Session token has expired. Please log in again.', 401, 'TOKEN_EXPIRED'));
+      return next(new UnauthorizedError('Session token has expired. Please log in again.', 'TOKEN_EXPIRED'));
     }
-    return next(new AppError('Invalid authentication token', 401, 'INVALID_TOKEN'));
+    return next(new UnauthorizedError('Invalid authentication token', 'INVALID_TOKEN'));
   }
 };
 
 export const requireRoles = (...roles: UserRole[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
-      return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+      return next(new UnauthorizedError('Authentication required', 'UNAUTHORIZED'));
     }
 
     if (!roles.includes(req.user.role)) {
       return next(
-        new AppError(
+        new ForbiddenError(
           `Forbidden: Role ${req.user.role} does not have permission for this resource. Required: ${roles.join(', ')}`,
-          403,
           'FORBIDDEN'
         )
       );
@@ -89,7 +88,7 @@ export const verifyZoneScope = (
 ) => {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
-      return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+      return next(new UnauthorizedError('Authentication required', 'UNAUTHORIZED'));
     }
 
     // Admins and Operators have global grid scope
@@ -106,9 +105,8 @@ export const verifyZoneScope = (
 
     if (targetZoneId && req.user.zoneId && targetZoneId !== req.user.zoneId) {
       return next(
-        new AppError(
+        new ForbiddenError(
           'Forbidden: You can only access resources within your assigned zone',
-          403,
           'ZONE_ACCESS_DENIED'
         )
       );
