@@ -5,7 +5,7 @@ import { store } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
-import { UserRole, UserStatus, paginationQuerySchema } from '@load-shedding/shared';
+import { UserRole, UserStatus, paginationQuerySchema, NotificationType } from '@load-shedding/shared';
 import {
   NotFoundError,
   ConflictError,
@@ -727,6 +727,212 @@ const runSuite = async () => {
       }
     });
     assert(zoneScopeFailedAsExpected, 'Middleware: verifyZoneScope blocks cross-zone request with ZONE_ACCESS_DENIED');
+
+    // Test 16: User Profile, Notifications Domain, and Common User Endpoints (Phase 9)
+    // 16a. Profile Retrieval & Linked Meters
+    const myProfileRes = await request(serverUrl, 'GET', '/api/v1/users/me', undefined, customerToken);
+    assert(
+      myProfileRes.status === 200 &&
+      myProfileRes.body.success === true &&
+      myProfileRes.body.data.email === 'customer@gmail.com' &&
+      Array.isArray(myProfileRes.body.data.meters) &&
+      myProfileRes.body.data.meters.length > 0 &&
+      myProfileRes.body.data.meters[0].meterNumber === 'MTR-DHN-101' &&
+      myProfileRes.body.data.meters[0].isPrimary === true,
+      'GET /api/v1/users/me returns enriched profile with linked meters'
+    );
+
+    // 16b. Profile Contact & Name Mutation
+    const updateProfileRes = await request(
+      serverUrl,
+      'PATCH',
+      '/api/v1/users/me',
+      { name: 'Anisur Rahman Chowdhury', phone: '+8801712349999' },
+      customerToken
+    );
+    assert(
+      updateProfileRes.status === 200 &&
+      updateProfileRes.body.success === true &&
+      updateProfileRes.body.data.name === 'Anisur Rahman Chowdhury' &&
+      updateProfileRes.body.data.phone === '+8801712349999',
+      'PATCH /api/v1/users/me updates name and phone and returns full profile'
+    );
+
+    // 16c. Password Change - Incorrect Current Password
+    const wrongCurrentPwdRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/users/me/password',
+      { currentPassword: 'WrongPassword123!', newPassword: 'NewValidPassword789!' },
+      customerToken
+    );
+    assert(
+      wrongCurrentPwdRes.status === 400 &&
+      wrongCurrentPwdRes.body.error.code === 'INCORRECT_CURRENT_PASSWORD',
+      'POST /api/v1/users/me/password rejects incorrect current password (400 INCORRECT_CURRENT_PASSWORD)'
+    );
+
+    // 16d. Password Change - Identical New Password
+    const samePwdRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/users/me/password',
+      { currentPassword: 'Password123!', newPassword: 'Password123!' },
+      customerToken
+    );
+    assert(
+      samePwdRes.status === 400 &&
+      samePwdRes.body.error.code === 'PASSWORD_SAME_AS_CURRENT',
+      'POST /api/v1/users/me/password rejects identical new password (400 PASSWORD_SAME_AS_CURRENT)'
+    );
+
+    // 16e. Password Change - Success & Subsequent Login
+    const validPwdChangeRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/users/me/password',
+      { currentPassword: 'Password123!', newPassword: 'NewCustomerPassword999!' },
+      customerToken
+    );
+    assert(
+      validPwdChangeRes.status === 200 && validPwdChangeRes.body.success === true,
+      'POST /api/v1/users/me/password updates password hash successfully'
+    );
+
+    const reLoginRes = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'customer@gmail.com',
+      password: 'NewCustomerPassword999!'
+    });
+    assert(
+      reLoginRes.status === 200 && !!reLoginRes.body.data.token,
+      'POST /api/auth/login succeeds with updated password credentials'
+    );
+    const updatedCustomerToken = reLoginRes.body.data.token;
+    const customerUserId = myProfileRes.body.data.id;
+
+    // 16f. Notifications Query & Pagination
+    const notifAId = `notif_test_${Date.now()}_1`;
+    const notifBId = `notif_test_${Date.now()}_2`;
+    const nowNotif = new Date().toISOString();
+    store.notifications.set(notifAId, {
+      id: notifAId,
+      userId: customerUserId,
+      title: 'Scheduled Outage Reminder',
+      message: 'Maintenance window active in your area',
+      type: NotificationType.PLANNED_SCHEDULE,
+      isRead: false,
+      readAt: null,
+      metadata: null,
+      createdAt: nowNotif
+    });
+    store.notifications.set(notifBId, {
+      id: notifBId,
+      userId: customerUserId,
+      title: 'System Notice',
+      message: 'Previous notification archived',
+      type: NotificationType.SYSTEM_ALERT,
+      isRead: true,
+      readAt: nowNotif,
+      metadata: null,
+      createdAt: nowNotif
+    });
+
+    const notifListRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/users/me/notifications?page=1&pageSize=10',
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      notifListRes.status === 200 &&
+      typeof notifListRes.body.data.unreadCount === 'number' &&
+      notifListRes.body.data.unreadCount >= 1 &&
+      Array.isArray(notifListRes.body.data.items),
+      'GET /api/v1/users/me/notifications returns collection with unreadCount metadata'
+    );
+
+    const unreadOnlyRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/users/me/notifications?unreadOnly=true',
+      undefined,
+      updatedCustomerToken
+    );
+    const allUnread = unreadOnlyRes.body.data.items.every((n: any) => n.isRead === false);
+    assert(
+      unreadOnlyRes.status === 200 && allUnread && unreadOnlyRes.body.data.items.length >= 1,
+      'GET /api/v1/users/me/notifications filters strictly unread items with unreadOnly=true'
+    );
+
+    // 16g. Single Notification Read & IDOR Shield
+    const idorNotifRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/users/me/notifications/${notifAId}/read`,
+      undefined,
+      customerBToken // Customer B attempting to mark Customer A's notification
+    );
+    assert(
+      idorNotifRes.status === 404 && idorNotifRes.body.error.code === 'NOTIFICATION_NOT_FOUND',
+      'IDOR Protection: Customer B blocked from marking Customer A notification (404 NOTIFICATION_NOT_FOUND)'
+    );
+
+    const markReadRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/users/me/notifications/${notifAId}/read`,
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      markReadRes.status === 200 &&
+      markReadRes.body.success === true &&
+      markReadRes.body.data.notification.isRead === true,
+      'PATCH /api/v1/users/me/notifications/:id/read marks notification as read'
+    );
+
+    // 16h. Bulk Notification Dismissal (Read All)
+    const notifCId = `notif_test_${Date.now()}_3`;
+    store.notifications.set(notifCId, {
+      id: notifCId,
+      userId: customerUserId,
+      title: 'Restoration Complete',
+      message: 'Power restored to Dhanmondi feeder',
+      type: NotificationType.POWER_RESTORED,
+      isRead: false,
+      readAt: null,
+      metadata: null,
+      createdAt: new Date().toISOString()
+    });
+
+    const readAllRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/users/me/notifications/read-all',
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      readAllRes.status === 200 &&
+      readAllRes.body.success === true &&
+      readAllRes.body.data.count >= 1,
+      'POST /api/v1/users/me/notifications/read-all marks all user notifications as read'
+    );
+
+    const postReadAllUnreadRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/users/me/notifications?unreadOnly=true',
+      undefined,
+      updatedCustomerToken
+    );
+    assert(
+      postReadAllUnreadRes.status === 200 &&
+      postReadAllUnreadRes.body.data.items.length === 0 &&
+      postReadAllUnreadRes.body.data.unreadCount === 0,
+      'Verified zero remaining unread notifications after bulk dismissal'
+    );
 
   } catch (err: any) {
     logger.error('Test execution error:', err);
