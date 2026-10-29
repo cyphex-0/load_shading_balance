@@ -66,6 +66,11 @@ export interface UserDto {
   updatedAt: string;
 }
 
+export interface AuthResultDto {
+  token: string;
+  user: UserDto;
+}
+
 export interface ZoneDto {
   id: string;
   name: string;

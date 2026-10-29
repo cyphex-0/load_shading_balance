@@ -28,6 +28,10 @@ export const verifyEmailConfirmSchema = z.object({
   token: z.string().min(1, 'Verification token is required')
 });
 
+export const refreshTokenSchema = z.object({
+  token: z.string().optional()
+});
+
 export const updateProfileSchema = z.object({
   name: z.string().min(2).optional(),
   phone: z.string().optional()
