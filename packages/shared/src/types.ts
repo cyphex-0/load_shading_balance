@@ -261,3 +261,133 @@ export interface GridMetricsDto {
   activeOutagesCount: number;
   timestamp: string;
 }
+
+// ============================================================================
+// Phase 12: Grid Discovery, Effective Feeder Status, and Operator Overview DTOs
+// ============================================================================
+
+export interface ZonePublicSummaryDto {
+  id: string;
+  name: string;
+  code: string;
+  description?: string | null;
+  substationsCount: number;
+  feedersCount: number;
+  totalCapacityMW: number;
+  activeOutagesCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeederPublicSummaryDto {
+  id: string;
+  name: string;
+  code: string;
+  capacityMW: number;
+  isCritical: boolean;
+  status: FeederStatus;
+  effectiveStatus: FeederStatus;
+  substationId: string;
+  substationName: string;
+  zoneId?: string | null;
+  zoneName?: string | null;
+  connectedMetersCount: number;
+  activeOutagesCount?: number;
+  activeOutage?: {
+    type: 'PLANNED' | 'UNPLANNED';
+    startTime: string;
+    estimatedRestoration?: string | null;
+    ticketNumber?: string;
+  } | null;
+  updatedAt: string;
+}
+
+export interface PublicScheduleSlotDto {
+  id: string;
+  startTime: string;
+  endTime: string;
+  targetDeficitMW: number;
+  actualDeficitMW: number;
+  assignedFeeders: Array<{
+    id: string;
+    name: string;
+    code: string;
+    substationName: string;
+    zoneName: string;
+    capacityMW: number;
+  }>;
+}
+
+export interface PublicScheduleResponseDto {
+  id: string;
+  planningDate: string;
+  status: ScheduleStatus;
+  publishedAt?: string | null;
+  totalSlots: number;
+  slots: PublicScheduleSlotDto[];
+}
+
+export interface GridOverviewDto {
+  metrics: GridMetricsDto;
+  feederCounts: {
+    total: number;
+    online: number;
+    plannedOutage: number;
+    unexpectedFault: number;
+    criticalExempt: number;
+  };
+  activeOutages: {
+    plannedCount: number;
+    unplannedCount: number;
+    totalCount: number;
+  };
+  technicians: {
+    total: number;
+    active: number;
+    dispatched: number;
+  };
+  zoneBreakdown: Array<{
+    zoneId: string;
+    zoneName: string;
+    zoneCode: string;
+    totalFeeders: number;
+    onlineCount: number;
+    outageCount: number;
+    totalCapacityMW: number;
+  }>;
+}
+
+export interface ActiveOutageItemDto {
+  id: string;
+  feederId: string;
+  feederName: string;
+  feederCode: string;
+  capacityMW: number;
+  substationName: string;
+  zoneName: string;
+  outageType: 'PLANNED' | 'UNPLANNED';
+  status: string;
+  startTime: string;
+  estimatedRestoration?: string | null;
+  impactedMetersCount: number;
+  ticket?: {
+    id: string;
+    ticketNumber: string;
+    description: string;
+    status: OutageStatus;
+    reportedAt: string;
+    assignedTechnician?: {
+      id: string;
+      name: string;
+      phone?: string | null;
+    } | null;
+  } | null;
+  scheduleSlot?: {
+    scheduleId: string;
+    slotId: string;
+    startTime: string;
+    endTime: string;
+    targetDeficitMW: number;
+  } | null;
+}
+

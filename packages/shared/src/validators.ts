@@ -207,3 +207,31 @@ export const auditLogQuerySchema = paginationQuerySchema.extend({
 export const idParamSchema = z.object({
   id: z.string().min(1, 'Resource identifier is required')
 });
+
+// ============================================================================
+// Phase 12: Grid Discovery, Effective Feeder Status, and Operator Overview Schemas
+// ============================================================================
+
+export const publicScheduleQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be formatted as YYYY-MM-DD').optional(),
+  zoneId: z.string().optional(),
+  feederId: z.string().optional()
+});
+
+export const publicFeedersQuerySchema = paginationQuerySchema.extend({
+  zoneId: z.string().optional(),
+  substationId: z.string().optional(),
+  status: z.nativeEnum(FeederStatus).optional(),
+  isCritical: z.preprocess((val) => {
+    if (val === 'true' || val === true) return true;
+    if (val === 'false' || val === false) return false;
+    return val;
+  }, z.boolean().optional()),
+  search: z.string().optional()
+});
+
+export const activeOutagesQuerySchema = paginationQuerySchema.extend({
+  zoneId: z.string().optional(),
+  outageType: z.enum(['PLANNED', 'UNPLANNED']).optional()
+});
+
