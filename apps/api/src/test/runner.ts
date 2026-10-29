@@ -5,7 +5,7 @@ import { store } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
-import { UserRole, UserStatus, paginationQuerySchema, NotificationType } from '@load-shedding/shared';
+import { UserRole, UserStatus, AssignmentStatus, paginationQuerySchema, NotificationType } from '@load-shedding/shared';
 import {
   NotFoundError,
   ConflictError,
@@ -932,6 +932,308 @@ const runSuite = async () => {
       postReadAllUnreadRes.body.data.items.length === 0 &&
       postReadAllUnreadRes.body.data.unreadCount === 0,
       'Verified zero remaining unread notifications after bulk dismissal'
+    );
+
+    // ==========================================
+    // Test 17: Admin User Provisioning, Roles, Status, and Scope (Phase 10)
+    // ==========================================
+
+    // 17a. User Discovery & Filtering with Pagination Envelope
+    const listUsersRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/users?role=TECHNICIAN&page=1&pageSize=5',
+      undefined,
+      adminToken
+    );
+    assert(
+      listUsersRes.status === 200 &&
+      listUsersRes.body.success === true &&
+      Array.isArray(listUsersRes.body.data.items) &&
+      listUsersRes.body.data.meta.page === 1 &&
+      listUsersRes.body.data.items.every((u: any) => u.role === UserRole.TECHNICIAN && u.passwordHash === undefined),
+      'GET /api/v1/admin/users filters by role, standardizes paginated envelope, and strips passwordHash'
+    );
+
+    // 17b. User Provisioning Guardrails
+    // 17b-1: Provisioning with invalid zone
+    const invalidZoneProvRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/users',
+      {
+        name: 'Invalid Zone Staff',
+        email: 'invalid.zone@grid.gov.bd',
+        password: 'Password123!',
+        role: UserRole.TECHNICIAN,
+        assignedZoneId: 'zn_nonexistent_999'
+      },
+      adminToken
+    );
+    assert(
+      invalidZoneProvRes.status === 404 && invalidZoneProvRes.body.error.code === 'ZONE_NOT_FOUND',
+      'POST /api/v1/admin/users rejects non-existent assignedZoneId with 404 ZONE_NOT_FOUND'
+    );
+
+    // 17b-2: Provisioning ZONE_MANAGER without assignedZoneId
+    const missingZoneMgrRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/users',
+      {
+        name: 'Unassigned Zone Manager',
+        email: 'unassigned.mgr@grid.gov.bd',
+        password: 'Password123!',
+        role: UserRole.ZONE_MANAGER
+      },
+      adminToken
+    );
+    assert(
+      missingZoneMgrRes.status === 400 && missingZoneMgrRes.body.error.code === 'ZONE_REQUIRED',
+      'POST /api/v1/admin/users rejects ZONE_MANAGER without zone assignment with 400 ZONE_REQUIRED'
+    );
+
+    // 17b-3: Successfully provision new staff with valid zone and safe response
+    const validStaffEmail = `staff_${Date.now()}@grid.gov.bd`;
+    const provStaffRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/users',
+      {
+        name: 'Field Tech Kamal',
+        email: validStaffEmail,
+        password: 'Password123!',
+        phone: '+8801700000099',
+        role: UserRole.TECHNICIAN,
+        assignedZoneId: 'zn_mirpur'
+      },
+      adminToken
+    );
+    assert(
+      provStaffRes.status === 201 &&
+      provStaffRes.body.success === true &&
+      provStaffRes.body.data.id &&
+      provStaffRes.body.data.email === validStaffEmail &&
+      provStaffRes.body.data.role === UserRole.TECHNICIAN &&
+      provStaffRes.body.data.passwordHash === undefined,
+      'POST /api/v1/admin/users creates staff with hashed credentials and excludes passwordHash in response'
+    );
+    const provisionedStaffId = provStaffRes.body.data.id;
+
+    // 17c. Duplicate email rejection
+    const duplicateEmailRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/users',
+      {
+        name: 'Duplicate Staff',
+        email: validStaffEmail,
+        password: 'Password123!',
+        role: UserRole.POWER_OPERATOR
+      },
+      adminToken
+    );
+    assert(
+      duplicateEmailRes.status === 409 && duplicateEmailRes.body.error.code === 'EMAIL_EXISTS',
+      'POST /api/v1/admin/users rejects duplicate email with 409 EMAIL_EXISTS'
+    );
+
+    // 17d. User Inspection Enriched with Zone
+    const inspectUserRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/admin/users/${provisionedStaffId}`,
+      undefined,
+      adminToken
+    );
+    assert(
+      inspectUserRes.status === 200 &&
+      inspectUserRes.body.success === true &&
+      inspectUserRes.body.data.id === provisionedStaffId &&
+      inspectUserRes.body.data.zone &&
+      inspectUserRes.body.data.zone.code === 'MIR' &&
+      inspectUserRes.body.data.passwordHash === undefined,
+      'GET /api/v1/admin/users/:id returns user profile enriched with zone details without passwordHash'
+    );
+
+    // 17e. Profile Mutation with Credential Leak Elimination
+    const patchUserRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/admin/users/${provisionedStaffId}`,
+      {
+        name: 'Senior Field Tech Kamal',
+        phone: '+8801700000088'
+      },
+      adminToken
+    );
+    assert(
+      patchUserRes.status === 200 &&
+      patchUserRes.body.success === true &&
+      patchUserRes.body.data.name === 'Senior Field Tech Kamal' &&
+      patchUserRes.body.data.passwordHash === undefined,
+      'PATCH /api/v1/admin/users/:id updates profile and strictly strips passwordHash from response'
+    );
+
+    // 17f. Role & Geographic Reassignment
+    // 17f-1: Promote to ZONE_MANAGER without zone assignment
+    const rolePromoteWithoutZoneRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/admin/users/${provisionedStaffId}/role`,
+      {
+        role: UserRole.ZONE_MANAGER,
+        assignedZoneId: null
+      },
+      adminToken
+    );
+    assert(
+      rolePromoteWithoutZoneRes.status === 400 && rolePromoteWithoutZoneRes.body.error.code === 'ZONE_REQUIRED',
+      'PATCH /api/v1/admin/users/:id/role rejects ZONE_MANAGER with null zone assignment'
+    );
+
+    // 17f-2: Reassign to ZONE_MANAGER with Dhanmondi zone
+    const roleReassignRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/admin/users/${provisionedStaffId}/role`,
+      {
+        role: UserRole.ZONE_MANAGER,
+        assignedZoneId: 'zn_dhanmondi'
+      },
+      adminToken
+    );
+    assert(
+      roleReassignRes.status === 200 &&
+      roleReassignRes.body.success === true &&
+      roleReassignRes.body.data.role === UserRole.ZONE_MANAGER &&
+      roleReassignRes.body.data.assignedZoneId === 'zn_dhanmondi' &&
+      roleReassignRes.body.data.passwordHash === undefined,
+      'PATCH /api/v1/admin/users/:id/role successfully reassigns role and geographic zone scope'
+    );
+
+    // 17g. Status Control & Self-Suspension Safeguard
+    // 17g-1: Admin attempts self-suspension
+    const selfSuspendRes = await request(
+      serverUrl,
+      'PATCH',
+      '/api/v1/admin/users/usr_admin_1/status',
+      {
+        status: UserStatus.SUSPENDED
+      },
+      adminToken
+    );
+    assert(
+      selfSuspendRes.status === 400 && selfSuspendRes.body.error.code === 'SELF_SUSPENSION_FORBIDDEN',
+      'PATCH /api/v1/admin/users/:id/status blocks Administrator self-suspension (400 SELF_SUSPENSION_FORBIDDEN)'
+    );
+
+    // 17g-2: Suspend target staff account
+    const suspendStaffRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/admin/users/${provisionedStaffId}/status`,
+      {
+        status: UserStatus.SUSPENDED
+      },
+      adminToken
+    );
+    assert(
+      suspendStaffRes.status === 200 &&
+      suspendStaffRes.body.success === true &&
+      suspendStaffRes.body.data.status === UserStatus.SUSPENDED,
+      'PATCH /api/v1/admin/users/:id/status suspends target user account'
+    );
+
+    // 17g-3: Reactivate target staff account via alias
+    const reactivateStaffRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/admin/users/${provisionedStaffId}/reactivate`,
+      undefined,
+      adminToken
+    );
+    assert(
+      reactivateStaffRes.status === 200 && reactivateStaffRes.body.success === true,
+      'POST /api/v1/admin/users/:id/reactivate reactivates suspended user account'
+    );
+
+    // 17h. Deprovisioning Safeguards & Soft-Deletion
+    // 17h-1: Admin attempts self-deletion
+    const selfDeleteRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/v1/admin/users/usr_admin_1',
+      undefined,
+      adminToken
+    );
+    assert(
+      selfDeleteRes.status === 400 && selfDeleteRes.body.error.code === 'SELF_DELETION_FORBIDDEN',
+      'DELETE /api/v1/admin/users/:id blocks Administrator self-deletion (400 SELF_DELETION_FORBIDDEN)'
+    );
+
+    // 17h-2: Technician with active task cannot be deleted
+    const busyTechId = `usr_busy_tech_${Date.now()}`;
+    store.users.set(busyTechId, {
+      id: busyTechId,
+      name: 'Busy Technician',
+      email: `busy.tech_${Date.now()}@grid.gov.bd`,
+      phone: '+8801799999999',
+      passwordHash: 'hash',
+      role: UserRole.TECHNICIAN,
+      status: UserStatus.ACTIVE,
+      assignedZoneId: 'zn_mirpur',
+      emailVerified: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    store.technicianAssignments.set(`asg_${busyTechId}`, {
+      id: `asg_${busyTechId}`,
+      ticketId: 'tkt_mock_active',
+      technicianId: busyTechId,
+      assignedById: 'usr_admin_1',
+      status: AssignmentStatus.PENDING,
+      assignedAt: new Date().toISOString()
+    });
+
+    const busyTechDeleteRes = await request(
+      serverUrl,
+      'DELETE',
+      `/api/v1/admin/users/${busyTechId}`,
+      undefined,
+      adminToken
+    );
+    assert(
+      busyTechDeleteRes.status === 400 && busyTechDeleteRes.body.error.code === 'ACTIVE_TASKS_EXIST',
+      'DELETE /api/v1/admin/users/:id blocks deprovisioning of technician with active tasks (400 ACTIVE_TASKS_EXIST)'
+    );
+
+    // 17h-3: Soft-delete provisioned staff user
+    const deleteStaffRes = await request(
+      serverUrl,
+      'DELETE',
+      `/api/v1/admin/users/${provisionedStaffId}`,
+      undefined,
+      adminToken
+    );
+    assert(
+      deleteStaffRes.status === 200 &&
+      deleteStaffRes.body.success === true &&
+      deleteStaffRes.body.data.message === 'User deleted successfully',
+      'DELETE /api/v1/admin/users/:id soft-deletes staff account'
+    );
+
+    // Verify subsequent GET returns 404 USER_NOT_FOUND
+    const postDeleteGetRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/admin/users/${provisionedStaffId}`,
+      undefined,
+      adminToken
+    );
+    assert(
+      postDeleteGetRes.status === 404 && postDeleteGetRes.body.error.code === 'USER_NOT_FOUND',
+      'Soft-deleted user is excluded from lookups with 404 USER_NOT_FOUND'
     );
 
   } catch (err: any) {
