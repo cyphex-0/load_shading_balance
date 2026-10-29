@@ -5,7 +5,13 @@ import { store } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
-import { UserRole } from '@load-shedding/shared';
+import { UserRole, paginationQuerySchema } from '@load-shedding/shared';
+import {
+  NotFoundError,
+  ConflictError,
+  ValidationError,
+  BadRequestError
+} from '../utils/response';
 
 // Helper to make test HTTP requests
 const request = async (
@@ -26,7 +32,7 @@ const request = async (
   const res = await fetch(url, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined
+    body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined
   });
 
   const text = await res.text();
@@ -279,6 +285,103 @@ const runSuite = async () => {
     assert(store.zones.size === originalZoneCount + 1, 'MemoryStore accepts mutated records in test');
     store.reset();
     assert(store.zones.size === originalZoneCount && !store.zones.has('zn_temp'), 'MemoryStore.reset() restores pristine initial seed state');
+
+    // Test 13: Phase 6 Validation, Pagination, and Error Contracts
+    // 13a. Body Validation Rejection (Zod 400 VALIDATION_ERROR)
+    const invalidReg = await request(serverUrl, 'POST', '/api/auth/register', {
+      name: 'A',
+      email: 'invalid-email',
+      password: '123'
+    });
+    assert(
+      invalidReg.status === 400 &&
+      invalidReg.body.success === false &&
+      invalidReg.body.error.code === 'VALIDATION_ERROR' &&
+      Array.isArray(invalidReg.body.error.details) &&
+      invalidReg.body.error.details.length >= 2,
+      'Zod validation middleware rejects invalid body with structured field error details'
+    );
+
+    // 13b. Query String Coercion and Notification Pagination
+    const notifsPaginated = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/users/me/notifications?page=1&pageSize=5',
+      undefined,
+      customerToken
+    );
+    assert(
+      notifsPaginated.status === 200 &&
+      notifsPaginated.body.success === true &&
+      Array.isArray(notifsPaginated.body.data.items) &&
+      notifsPaginated.body.data.meta.page === 1 &&
+      notifsPaginated.body.data.meta.pageSize === 5 &&
+      typeof notifsPaginated.body.data.meta.totalPages === 'number',
+      'GET /api/v1/users/me/notifications supports query coercion and standard pagination envelope'
+    );
+
+    // 13c. Admin User Collection Pagination
+    const adminUsersPaginated = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/users?page=1&pageSize=2',
+      undefined,
+      adminToken
+    );
+    assert(
+      adminUsersPaginated.status === 200 &&
+      adminUsersPaginated.body.success === true &&
+      adminUsersPaginated.body.data.items.length === 2 &&
+      adminUsersPaginated.body.data.meta.page === 1 &&
+      adminUsersPaginated.body.data.meta.pageSize === 2 &&
+      adminUsersPaginated.body.data.meta.hasNextPage === true,
+      'GET /api/v1/admin/users returns standardized PaginatedData envelope when page parameters provided'
+    );
+
+    // 13d. Operator Schedules Collection Pagination
+    const opSchedulesPaginated = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/schedules?page=1&pageSize=10',
+      undefined,
+      opToken
+    );
+    assert(
+      opSchedulesPaginated.status === 200 &&
+      opSchedulesPaginated.body.success === true &&
+      Array.isArray(opSchedulesPaginated.body.data.items) &&
+      opSchedulesPaginated.body.data.meta.page === 1,
+      'GET /api/v1/operator/schedules returns paginated schedules list'
+    );
+
+    // 13e. Domain Error Hierarchy Classes
+    const notFoundErr = new NotFoundError('Feeder FDR-99 not found', 'FEEDER_NOT_FOUND');
+    assert(notFoundErr.statusCode === 404 && notFoundErr.code === 'FEEDER_NOT_FOUND', 'NotFoundError produces status 404 with custom error code');
+
+    const conflictErr = new ConflictError('Meter already assigned');
+    assert(conflictErr.statusCode === 409 && conflictErr.code === 'CONFLICT', 'ConflictError produces status 409 with CONFLICT code');
+
+    const validationErr = new ValidationError('Payload invalid');
+    assert(validationErr.statusCode === 400 && validationErr.code === 'VALIDATION_ERROR', 'ValidationError produces status 400 with VALIDATION_ERROR code');
+
+    const badReqErr = new BadRequestError('Malformed query');
+    assert(badReqErr.statusCode === 400 && badReqErr.code === 'BAD_REQUEST', 'BadRequestError produces status 400 with BAD_REQUEST code');
+
+    // 13f. Pagination Query Schema Coercion
+    const parsedPagination = paginationQuerySchema.parse({ page: '3', pageSize: '15' });
+    assert(parsedPagination.page === 3 && parsedPagination.pageSize === 15, 'paginationQuerySchema safely coerces string parameters to integers');
+
+    // 13g. Malformed JSON Body Handling
+    const malformedReq = await request(
+      serverUrl,
+      'POST',
+      '/api/auth/login',
+      '{"bad_json_string": '
+    );
+    assert(
+      malformedReq.status === 400 && malformedReq.body.error.code === 'INVALID_JSON',
+      'Body parser catches malformed JSON and responds with 400 INVALID_JSON'
+    );
 
   } catch (err: any) {
     logger.error('Test execution error:', err);

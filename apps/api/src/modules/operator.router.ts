@@ -9,7 +9,7 @@ import {
 } from '@load-shedding/shared';
 import { store, TechnicianAssignmentRecord, OutageStatusHistoryRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError } from '../utils/response';
+import { successResponse, paginatedResponse, AppError } from '../utils/response';
 import { schedulerService } from '../services/scheduler.service';
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from '../services/notification.service';
@@ -36,6 +36,27 @@ const handleGenerateDraft = async (req: any, res: any, next: any) => {
 
 operatorRouter.post('/operator/schedules/draft', opAuth, handleGenerateDraft);
 operatorRouter.post('/v1/operator/schedules/generate', opAuth, handleGenerateDraft);
+
+// Canonical Endpoint 32: GET /api/v1/operator/schedules
+operatorRouter.get('/operator/schedules', opAuth, (req, res) => {
+  let list = Array.from(store.schedules.values());
+
+  if (req.query.status) {
+    list = list.filter((s) => s.status === req.query.status);
+  }
+  if (req.query.date) {
+    list = list.filter((s) => s.planningDate === req.query.date);
+  }
+
+  list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+  const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+  const total = list.length;
+  const paginated = list.slice((page - 1) * pageSize, page * pageSize);
+
+  return paginatedResponse(res, paginated, total, page, pageSize);
+});
 
 // Endpoint 31: GET /api/operator/schedules/:id
 operatorRouter.get('/operator/schedules/:id', opAuth, async (req, res, next) => {

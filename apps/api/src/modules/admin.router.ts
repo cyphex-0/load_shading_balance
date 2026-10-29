@@ -25,7 +25,7 @@ import {
   AuditLogRecord
 } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError } from '../utils/response';
+import { successResponse, paginatedResponse, AppError, NotFoundError } from '../utils/response';
 
 export const adminRouter = Router();
 
@@ -82,7 +82,7 @@ adminRouter.post('/admin/zones', (req: any, res, next) => {
 
 // Endpoint 53: GET /api/admin/zones
 adminRouter.get('/admin/zones', (req, res) => {
-  const zones = Array.from(store.zones.values())
+  let zones = Array.from(store.zones.values())
     .filter((z) => !z.deletedAt)
     .map((z) => {
       const subs = Array.from(store.substations.values()).filter((s) => s.zoneId === z.id && !s.deletedAt);
@@ -91,6 +91,19 @@ adminRouter.get('/admin/zones', (req, res) => {
         substationsCount: subs.length
       };
     });
+
+  if (req.query.search) {
+    const q = (req.query.search as string).toLowerCase();
+    zones = zones.filter((z) => z.name.toLowerCase().includes(q) || z.code.toLowerCase().includes(q));
+  }
+
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = zones.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, zones.length, page, pageSize);
+  }
+
   return successResponse(res, zones);
 });
 
@@ -457,6 +470,13 @@ adminRouter.get('/admin/users', (req, res) => {
     createdAt: u.createdAt
   }));
 
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = clean.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, clean.length, page, pageSize);
+  }
+
   return successResponse(res, clean);
 });
 
@@ -578,11 +598,24 @@ adminRouter.patch('/infrastructure-requests/:id/status', (req: any, res, next) =
 
 // Endpoint 80: GET /api/admin/audit
 adminRouter.get('/admin/audit', (req, res) => {
-  const logs = Array.from(store.auditLogs.values())
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 100);
+  let logs = Array.from(store.auditLogs.values())
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  return successResponse(res, logs);
+  if (req.query.action) {
+    logs = logs.filter((l) => l.action.toLowerCase().includes((req.query.action as string).toLowerCase()));
+  }
+  if (req.query.userId) {
+    logs = logs.filter((l) => l.actorId === req.query.userId);
+  }
+
+  if (req.query.page || req.query.pageSize) {
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
+    const paginated = logs.slice((page - 1) * pageSize, page * pageSize);
+    return paginatedResponse(res, paginated, logs.length, page, pageSize);
+  }
+
+  return successResponse(res, logs.slice(0, 100));
 });
 
 // Endpoint 81: GET /api/admin/notifications

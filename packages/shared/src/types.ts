@@ -24,6 +24,27 @@ export interface ApiError {
   details?: any[];
 }
 
+export interface PaginationMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+}
+
+export interface PaginatedData<T> {
+  items: T[];
+  meta: PaginationMeta;
+}
+
+export type PaginatedApiResponse<T> = ApiResponse<PaginatedData<T>>;
+
+export interface PaginationQueryDto {
+  page?: number;
+  pageSize?: number;
+}
+
 export interface JwtPayload {
   sub: string;
   role: UserRole;
@@ -205,4 +226,3 @@ export interface GridMetricsDto {
   activeOutagesCount: number;
   timestamp: string;
 }
-

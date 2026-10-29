@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus } from './enums';
+import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus } from './enums';
 
 // Auth validators
 export const registerSchema = z.object({
@@ -148,3 +148,43 @@ export const updateUserAdminSchema = z.object({
   assignedZoneId: z.string().nullable().optional()
 });
 
+// ============================================================================
+// Phase 6: Pagination, Query Filters, and Path Parameter Validators
+// ============================================================================
+
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20)
+});
+
+export const notificationQuerySchema = paginationQuerySchema.extend({
+  unreadOnly: z.preprocess((val) => {
+    if (val === 'true' || val === true) return true;
+    if (val === 'false' || val === false) return false;
+    return val;
+  }, z.boolean().optional())
+});
+
+export const userListQuerySchema = paginationQuerySchema.extend({
+  role: z.nativeEnum(UserRole).optional(),
+  status: z.nativeEnum(UserStatus).optional(),
+  zoneId: z.string().optional()
+});
+
+export const zoneListQuerySchema = paginationQuerySchema.extend({
+  search: z.string().optional()
+});
+
+export const scheduleListQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(ScheduleStatus).optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').optional()
+});
+
+export const auditLogQuerySchema = paginationQuerySchema.extend({
+  action: z.string().optional(),
+  userId: z.string().optional()
+});
+
+export const idParamSchema = z.object({
+  id: z.string().min(1, 'Resource identifier is required')
+});
