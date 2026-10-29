@@ -13,6 +13,7 @@
     "build": "npm run build --workspaces",
     "build:api": "npm run build --workspace=apps/api",
     "build:web": "npm run build --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspace=apps/api",
     "test": "npm run test --workspace=apps/api",
     "lint": "npm run lint --workspaces"
   },
@@ -20,4 +21,3 @@
     "typescript": "^5.4.5"
   }
 }
-
