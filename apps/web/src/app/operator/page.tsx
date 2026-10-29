@@ -184,9 +184,9 @@ export default function OperatorDashboardPage() {
             fetchOverview();
             fetchOutages();
           }}
-          className="px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-mono font-semibold flex items-center gap-2 self-start transition-colors"
+          className="min-h-[44px] px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-mono font-semibold inline-flex items-center gap-2 self-start transition-colors"
         >
-          <RefreshCw className="h-3.5 w-3.5" /> REFRESH METRICS
+          <RefreshCw className="h-4 w-4" /> REFRESH METRICS
         </button>
       </div>
 
@@ -418,7 +418,7 @@ export default function OperatorDashboardPage() {
                     <td className="py-3.5 px-4 text-right">
                       <button
                         onClick={() => setSelectedTicket(t)}
-                        className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-bold text-[11px] transition-colors"
+                        className="min-h-[36px] px-3.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-bold text-xs inline-flex items-center justify-center transition-colors"
                       >
                         {t.assignedTechnician ? 'Reassign' : 'Dispatch Crew'}
                       </button>
@@ -442,7 +442,7 @@ export default function OperatorDashboardPage() {
               </h3>
               <button
                 onClick={() => setSelectedTicket(null)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close modal"
               >
                 <X className="h-5 w-5" />

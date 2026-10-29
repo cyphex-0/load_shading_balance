@@ -259,7 +259,7 @@ export default function AdminDashboardPage() {
                     <td className="py-3.5 px-4 text-right">
                       <button
                         onClick={() => handleToggleCritical(f.id, f.isCritical)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-colors ${
+                        className={`min-h-[36px] px-3.5 py-1.5 rounded-lg text-xs font-mono font-bold inline-flex items-center justify-center transition-colors ${
                           f.isCritical
                             ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300'
                             : 'bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-300'
@@ -330,7 +330,7 @@ export default function AdminDashboardPage() {
                       {u.role !== 'ADMIN' && (
                         <button
                           onClick={() => handleToggleSuspend(u.id, u.status)}
-                          className="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 text-slate-700 text-[11px] font-mono font-semibold transition-colors"
+                          className="min-h-[36px] px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-mono font-semibold inline-flex items-center justify-center transition-colors"
                         >
                           {u.status === 'ACTIVE' ? 'Suspend' : 'Reactivate'}
                         </button>
@@ -444,7 +444,7 @@ export default function AdminDashboardPage() {
               </h3>
               <button
                 onClick={() => setShowUserModal(false)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close modal"
               >
                 <X className="h-5 w-5" />
@@ -546,7 +546,7 @@ export default function AdminDashboardPage() {
               </h3>
               <button
                 onClick={() => setSelectedRequest(null)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close modal"
               >
                 <X className="h-5 w-5" />

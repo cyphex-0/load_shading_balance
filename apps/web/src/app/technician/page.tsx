@@ -310,7 +310,7 @@ export default function TechnicianDashboardPage() {
               </h3>
               <button
                 onClick={() => setResolvingTicket(null)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close modal"
               >
                 <X className="h-5 w-5" />

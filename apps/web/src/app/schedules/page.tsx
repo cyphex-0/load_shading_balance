@@ -57,7 +57,7 @@ export default function PublicSchedulesPage() {
 
         <button
           onClick={fetchPublicGrid}
-          className="px-3.5 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-mono font-semibold flex items-center gap-2 self-start transition-colors"
+          className="min-h-[44px] px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-mono font-semibold inline-flex items-center gap-2 self-start transition-colors"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> REFRESH CACHE
         </button>
@@ -71,7 +71,7 @@ export default function PublicSchedulesPage() {
             <select
               value={selectedZone}
               onChange={(e) => setSelectedZone(e.target.value)}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+              className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
             >
               <option value="ALL">All City Zones ({feeders.length} Feeders)</option>
               {zones.map((z) => (
@@ -83,13 +83,13 @@ export default function PublicSchedulesPage() {
           </div>
 
           <div className="relative">
-            <Search className="h-3.5 w-3.5 absolute left-3 top-2 text-slate-400" />
+            <Search className="h-4 w-4 absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
             <input
               type="text"
               placeholder="Search feeder..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 w-40 sm:w-56"
+              className="min-h-[44px] pl-9 pr-3.5 py-2 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 w-40 sm:w-56"
             />
           </div>
         </div>

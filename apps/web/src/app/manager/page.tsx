@@ -130,7 +130,7 @@ export default function ZoneManagerPage() {
           </button>
           <button
             onClick={fetchData}
-            className="p-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-600 transition-colors"
+            className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-600 transition-colors"
             title="Refresh district telemetry"
             aria-label="Refresh district telemetry"
           >
@@ -140,7 +140,7 @@ export default function ZoneManagerPage() {
       </div>
 
       {/* Hallmark Navigation Tabs */}
-      <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold">
+      <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold overflow-x-auto whitespace-nowrap">
         <button
           onClick={() => setActiveTab('grid')}
           className={`pb-3.5 transition-colors flex items-center gap-2 ${
@@ -185,7 +185,7 @@ export default function ZoneManagerPage() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-cyan-600 focus:border-cyan-600"
+                className="min-h-[44px] text-xs px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-slate-900 font-medium focus:outline-none focus:ring-1 focus:ring-cyan-600 focus:border-cyan-600"
               >
                 <option value="">All Statuses</option>
                 <option value="ONLINE">Online Normal</option>
@@ -195,13 +195,13 @@ export default function ZoneManagerPage() {
             </div>
 
             <div className="relative">
-              <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-slate-400" />
+              <Search className="h-4 w-4 absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search feeder name or code..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-cyan-600 focus:border-cyan-600 w-48 sm:w-64"
+                className="min-h-[44px] pl-9 pr-3.5 py-2 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-cyan-600 focus:border-cyan-600 w-48 sm:w-64"
               />
             </div>
           </div>
@@ -339,7 +339,7 @@ export default function ZoneManagerPage() {
             </h3>
             <button
               onClick={() => setShowUpgradeModal(true)}
-              className="px-3.5 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-800 text-white font-bold text-xs shadow-sm transition-colors"
+              className="min-h-[44px] px-4 py-2 rounded-lg bg-cyan-700 hover:bg-cyan-800 text-white font-bold text-xs shadow-sm inline-flex items-center transition-colors"
             >
               + New Petition
             </button>
@@ -396,7 +396,7 @@ export default function ZoneManagerPage() {
               </h3>
               <button
                 onClick={() => setShowUpgradeModal(false)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                className="min-h-[44px] min-w-[44px] rounded-lg inline-flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close modal"
               >
                 <X className="h-5 w-5" />

@@ -352,20 +352,20 @@ export default function HomePage() {
           {/* Controls: Search, Zone Filter, Refresh */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="relative">
-              <Search className="h-3.5 w-3.5 absolute left-3 top-2.5 text-slate-400" />
+              <Search className="h-4 w-4 absolute left-3 top-3.5 text-slate-400 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search feeder or substation..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 w-48 sm:w-64"
+                className="min-h-[44px] pl-9 pr-3.5 py-2 text-xs rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 w-48 sm:w-64"
               />
             </div>
 
             <select
               value={selectedZone}
               onChange={(e) => setSelectedZone(e.target.value)}
-              className="px-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+              className="min-h-[44px] px-3.5 py-2 text-xs rounded-lg border border-slate-300 bg-white text-slate-800 font-medium focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
             >
               <option value="ALL">All Zones ({feeders.length})</option>
               {uniqueZones.map((z: any) => (
@@ -377,11 +377,11 @@ export default function HomePage() {
 
             <button
               onClick={fetchStatus}
-              className="p-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 transition-colors text-slate-600"
+              className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 transition-colors text-slate-600"
               title="Refresh Feeder Matrix"
               aria-label="Refresh Feeder Matrix"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
