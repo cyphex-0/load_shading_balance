@@ -205,3 +205,56 @@ To handle massive concurrent read traffic during peak load shedding:
   - Automatically invalidated on `feeder:status_changed` or ticket resolution.
 - **Resilience:** If Redis is down or unreachable, the system falls back seamlessly to direct PostgreSQL queries with zero customer-facing downtime.
 
+
+---
+
+### 6. Operational State Machines & Planned Outage Definition
+
+#### 6.1 Schedule Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT : Operator Generates Plan (POST /schedules/draft)
+    DRAFT --> DRAFT : Operator Adjusts Feeder Slots (PATCH /schedules/:id/slots)
+    DRAFT --> PUBLISHED : Operator Publishes (POST /schedules/:id/publish)
+    DRAFT --> CANCELLED : Operator Discards
+    PUBLISHED --> ACTIVE : Start Time Arrived (cron Schedule Enforcer)
+    PUBLISHED --> CANCELLED : Emergency Operator Override
+    ACTIVE --> COMPLETED : End Time Arrived (Power Restored)
+    ACTIVE --> CANCELLED : Premature Restoration / Cancellation
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+```
+
+#### 6.2 Outage Ticket State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> REPORTED : Customer Submits Outage (Not under planned cut)
+    REPORTED --> ASSIGNED : Auto/Manual Dispatch (Fewest active tickets in zone)
+    ASSIGNED --> EN_ROUTE : Technician Taps Accept (POST /assignments/:id/accept)
+    EN_ROUTE --> REPAIRING : Technician Arrives On-Site (POST /assignments/:id/start-repair)
+    REPAIRING --> RESOLVED : Repair Photo Uploaded & Power Verified (POST /assignments/:id/resolve)
+    REPORTED --> CANCELLED : Power Restored Prematurely
+    ASSIGNED --> CANCELLED : Discarded
+    RESOLVED --> [*]
+    CANCELLED --> [*]
+```
+
+#### 6.3 Mathematical Definition of an Active Planned Outage
+
+A feeder or customer meter is considered under an **Active Planned Outage** if and only if all three conditions are satisfied:
+1. **Schedule Status:** The parent schedule is in status `PUBLISHED` or `ACTIVE`.
+2. **Time Interval:** The current server time $t$ satisfies:
+   $$\text{startTime} \le t < \text{endTime}$$
+   evaluated strictly within the operational timezone **`Asia/Dhaka`**.
+3. **Target Feeder:** The feeder corresponding to the customer's electric meter is explicitly listed in `OutageScheduleItem`.
+
+#### 6.4 The Smart Conflict Resolution Hard Rule
+
+If a customer submits an outage report while their feeder satisfies the Active Planned Outage condition:
+* An **`OutageReportEvent`** audit row is persisted (`isScheduledConflict: true`).
+* **NO `OutageTicket` is created.**
+* **NO technician is dispatched.**
+* The API returns `200 OK` with an informative response:
+  > *"Your area is currently under scheduled load shedding until HH:MM. This is an expected planned outage; no technician will be dispatched."*

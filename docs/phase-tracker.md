@@ -9,7 +9,7 @@ This document tracks implementation progress across all 26 phases of the **Load 
 | Phase | Title | Status | Verification Evidence |
 | :---: | :--- | :---: | :--- |
 | **0** | Repository reconnaissance, project contract, architecture decisions, and implementation gates | **VERIFIED** | `docs/source-register.md`, `docs/decisions.md`, `npm install`, canonical `/api/v1` routes |
-| **1** | Requirements Baseline, Route Contract, and Decision Register | **VERIFIED** | Frozen decisions D-01 to D-18, canonical `/api/v1` route inventory |
+| **1** | Requirements Baseline, Route Contract, and Decision Register | **VERIFIED** | Canonical routes in `docs/api.md`, end-to-end mapping in `docs/traceability.md`, decisions in `docs/decisions.md` |
 | **2** | Backend Package, TypeScript, Test Runner, and CI Baseline | **VERIFIED** | `apps/api/package.json`, `tsconfig.json`, `apps/api/src/test/runner.ts` |
 | **3** | Environment Validation, Logging, Security Defaults, and HTTP Bootstrap | **VERIFIED** | `apps/api/src/config/index.ts`, CORS, Helmet-ready, `/api/v1/health` endpoints |
 | **4** | Base Prisma Schema and Relational Grid Hierarchy | **VERIFIED** | `apps/api/prisma/schema.prisma` with 14 models ($\text{Zone} \to \text{Substation} \to \text{Feeder} \to \text{Transformer} \to \text{Meter}$) |
