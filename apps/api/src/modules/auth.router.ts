@@ -27,7 +27,7 @@ import { logger } from '../utils/logger';
 export const authRouter = Router();
 
 // Endpoint 4: POST /api/auth/register
-authRouter.post('/auth/register', validateBody(registerSchema), async (req, res) => {
+authRouter.post('/auth/register', validateBody(registerSchema), (req, res) => {
   const data = req.body;
 
   // Check duplicate email
@@ -107,7 +107,7 @@ authRouter.post('/auth/register', validateBody(registerSchema), async (req, res)
 });
 
 // Endpoint 5: POST /api/auth/login
-authRouter.post('/auth/login', validateBody(loginSchema), async (req, res) => {
+authRouter.post('/auth/login', validateBody(loginSchema), (req, res) => {
   const { email, password } = req.body;
 
   const user = Array.from(store.users.values()).find(
@@ -118,7 +118,7 @@ authRouter.post('/auth/login', validateBody(loginSchema), async (req, res) => {
   }
 
   if (user.status === UserStatus.SUSPENDED) {
-    throw new ForbiddenError('Account suspended. Contact administration.');
+    throw new ForbiddenError('Account suspended. Contact administration.', 'ACCOUNT_SUSPENDED');
   }
 
   const passwordMatch = bcrypt.compareSync(password, user.passwordHash);
@@ -197,7 +197,7 @@ authRouter.post('/auth/refresh', authenticateUser, (req: any, res) => {
   }
 
   if (user.status === UserStatus.SUSPENDED) {
-    throw new ForbiddenError('Your account has been suspended by an administrator');
+    throw new ForbiddenError('Your account has been suspended by an administrator', 'ACCOUNT_SUSPENDED');
   }
 
   const tokenPayload = {

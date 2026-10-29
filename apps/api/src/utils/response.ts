@@ -31,15 +31,15 @@ export class ValidationError extends AppError {
 }
 
 export class UnauthorizedError extends AppError {
-  constructor(message = 'Authentication required to access this resource') {
-    super(message, 401, 'UNAUTHORIZED');
+  constructor(message = 'Authentication required to access this resource', code = 'UNAUTHORIZED') {
+    super(message, 401, code);
     Object.setPrototypeOf(this, UnauthorizedError.prototype);
   }
 }
 
 export class ForbiddenError extends AppError {
-  constructor(message = 'Forbidden: You do not have permission to perform this action') {
-    super(message, 403, 'FORBIDDEN');
+  constructor(message = 'Forbidden: You do not have permission to perform this action', code = 'FORBIDDEN') {
+    super(message, 403, code);
     Object.setPrototypeOf(this, ForbiddenError.prototype);
   }
 }

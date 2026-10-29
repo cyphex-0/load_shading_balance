@@ -5,7 +5,7 @@ import { store } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
-import { UserRole, paginationQuerySchema } from '@load-shedding/shared';
+import { UserRole, UserStatus, paginationQuerySchema } from '@load-shedding/shared';
 import {
   NotFoundError,
   ConflictError,
@@ -382,6 +382,138 @@ const runSuite = async () => {
       malformedReq.status === 400 && malformedReq.body.error.code === 'INVALID_JSON',
       'Body parser catches malformed JSON and responds with 400 INVALID_JSON'
     );
+
+    // Test 14: Phase 7 Authentication Lifecycle & Edge Cases
+    // 14a. Customer Self-Registration with Valid Unlinked Meter
+    const regRes = await request(serverUrl, 'POST', '/api/auth/register', {
+      name: 'Zarin Customer',
+      email: 'zarin.new@gmail.com',
+      phone: '+8801799999999',
+      password: 'SecurePassword123!',
+      meterNumber: 'MTR-MIR-201'
+    });
+    assert(
+      regRes.status === 201 &&
+      regRes.body.success === true &&
+      regRes.body.data.user.role === 'CUSTOMER' &&
+      regRes.body.data.user.email === 'zarin.new@gmail.com',
+      'POST /api/auth/register successfully registers new Customer with default role'
+    );
+    const zarinUserId = regRes.body.data.user.id;
+    const meterBinding = Array.from(store.customerMeters.values()).find(
+      (cm) => cm.customerId === zarinUserId && !cm.unlinkedAt
+    );
+    assert(!!meterBinding, 'POST /api/auth/register binds valid initial meter to new customer');
+
+    // 14b. Duplicate Email Conflict Rejection
+    const dupEmailRes = await request(serverUrl, 'POST', '/api/auth/register', {
+      name: 'Duplicate Zarin',
+      email: 'zarin.new@gmail.com',
+      password: 'SecurePassword123!'
+    });
+    assert(
+      dupEmailRes.status === 409 && dupEmailRes.body.error.code === 'EMAIL_EXISTS',
+      'POST /api/auth/register rejects duplicate email with 409 EMAIL_EXISTS'
+    );
+
+    // 14c. Registration with Non-Existent Meter
+    const nonExistentMeterRes = await request(serverUrl, 'POST', '/api/auth/register', {
+      name: 'Ghost User',
+      email: 'ghost@gmail.com',
+      password: 'SecurePassword123!',
+      meterNumber: 'MTR-NONEXISTENT-999'
+    });
+    assert(
+      nonExistentMeterRes.status === 404 && nonExistentMeterRes.body.error.code === 'METER_NOT_FOUND',
+      'POST /api/auth/register rejects non-existent meter with 404 METER_NOT_FOUND'
+    );
+
+    // 14d. Registration with Already-Linked Meter
+    const alreadyLinkedMeterRes = await request(serverUrl, 'POST', '/api/auth/register', {
+      name: 'Another Resident',
+      email: 'resident2@gmail.com',
+      password: 'SecurePassword123!',
+      meterNumber: 'MTR-MIR-201'
+    });
+    assert(
+      alreadyLinkedMeterRes.status === 409 && alreadyLinkedMeterRes.body.error.code === 'METER_ALREADY_LINKED',
+      'POST /api/auth/register rejects already-linked meter with 409 METER_ALREADY_LINKED'
+    );
+
+    // 14e. Session / Current User Resolution
+    const zarinLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'zarin.new@gmail.com',
+      password: 'SecurePassword123!'
+    });
+    assert(zarinLogin.status === 200 && !!zarinLogin.body.data.token, 'POST /api/auth/login succeeds for newly registered user');
+    const zarinToken = zarinLogin.body.data.token;
+
+    const zarinSession = await request(serverUrl, 'GET', '/api/v1/auth/session', undefined, zarinToken);
+    assert(
+      zarinSession.status === 200 &&
+      zarinSession.body.data.user.email === 'zarin.new@gmail.com' &&
+      zarinSession.body.data.user.role === 'CUSTOMER',
+      'GET /api/v1/auth/session resolves active identity and role'
+    );
+
+    // 14f. Token Refresh Endpoint
+    const refreshRes = await request(serverUrl, 'POST', '/api/v1/auth/refresh', undefined, zarinToken);
+    assert(
+      refreshRes.status === 200 &&
+      refreshRes.body.success === true &&
+      typeof refreshRes.body.data.token === 'string' &&
+      refreshRes.body.data.user.email === 'zarin.new@gmail.com',
+      'POST /api/v1/auth/refresh issues renewed token for active user'
+    );
+
+    // 14g. Suspended Account Rejection
+    const zarinUserRecord = store.users.get(zarinUserId)!;
+    zarinUserRecord.status = UserStatus.SUSPENDED;
+
+    const suspendedLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'zarin.new@gmail.com',
+      password: 'SecurePassword123!'
+    });
+    assert(
+      suspendedLogin.status === 403 && suspendedLogin.body.error.code === 'ACCOUNT_SUSPENDED',
+      'POST /api/auth/login rejects suspended accounts with 403 ACCOUNT_SUSPENDED'
+    );
+
+    const suspendedSession = await request(serverUrl, 'GET', '/api/v1/auth/session', undefined, zarinToken);
+    assert(
+      suspendedSession.status === 403 && suspendedSession.body.error.code === 'ACCOUNT_SUSPENDED',
+      'GET /api/v1/auth/session revokes access for suspended accounts with 403'
+    );
+    zarinUserRecord.status = UserStatus.ACTIVE;
+
+    // 14h. Email Verification Request & Confirm Flow
+    const emailReq = await request(serverUrl, 'POST', '/api/v1/auth/verify-email/request', undefined, zarinToken);
+    assert(emailReq.status === 200 && !!emailReq.body.data.devToken, 'POST /api/v1/auth/verify-email/request generates dev verification token');
+    const verifyToken = emailReq.body.data.devToken;
+
+    const verifyConfirm = await request(serverUrl, 'POST', '/api/v1/auth/verify-email/confirm', { token: verifyToken });
+    assert(verifyConfirm.status === 200 && zarinUserRecord.emailVerified !== null, 'POST /api/v1/auth/verify-email/confirm marks email verified');
+
+    // 14i. Password Reset Request & Confirm Flow
+    const forgotRes = await request(serverUrl, 'POST', '/api/v1/auth/password/forgot', { email: 'zarin.new@gmail.com' });
+    assert(forgotRes.status === 200 && !!forgotRes.body.data.devToken, 'POST /api/v1/auth/password/forgot dispatches reset token');
+    const resetToken = forgotRes.body.data.devToken;
+
+    const resetConfirm = await request(serverUrl, 'POST', '/api/v1/auth/password/reset', {
+      token: resetToken,
+      newPassword: 'BrandNewPassword456!'
+    });
+    assert(resetConfirm.status === 200, 'POST /api/v1/auth/password/reset updates password hash');
+
+    const newPassLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'zarin.new@gmail.com',
+      password: 'BrandNewPassword456!'
+    });
+    assert(newPassLogin.status === 200, 'POST /api/auth/login succeeds with updated password');
+
+    // 14j. Logout Endpoint
+    const logoutRes = await request(serverUrl, 'POST', '/api/v1/auth/logout', undefined, zarinToken);
+    assert(logoutRes.status === 200 && logoutRes.body.success === true, 'POST /api/v1/auth/logout clears session');
 
   } catch (err: any) {
     logger.error('Test execution error:', err);
