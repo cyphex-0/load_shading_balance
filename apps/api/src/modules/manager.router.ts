@@ -7,7 +7,7 @@ import {
 } from '@load-shedding/shared';
 import { store, InfrastructureRequestRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError } from '../utils/response';
+import { successResponse, AppError, ForbiddenError, NotFoundError } from '../utils/response';
 
 export const managerRouter = Router();
 
@@ -137,7 +137,7 @@ managerRouter.patch('/v1/manager/outages/:id/assignment', mgrAuth, (req: any, re
   try {
     const { technicianId } = assignTechnicianSchema.parse(req.body);
     const ticket = store.outageTickets.get(req.params.id);
-    if (!ticket) throw new AppError('Ticket not found', 404, 'TICKET_NOT_FOUND');
+    if (!ticket) throw new NotFoundError('Ticket not found', 'TICKET_NOT_FOUND');
 
     const tech = store.users.get(technicianId);
     if (!tech || tech.role !== UserRole.TECHNICIAN) {
@@ -254,7 +254,19 @@ const handleCreateUpgradeRequest = (req: any, res: any, next: any) => {
   try {
     const data = infrastructureRequestSchema.parse(req.body);
     const feeder = store.feeders.get(data.feederId);
-    if (!feeder) throw new AppError('Feeder not found', 404, 'FEEDER_NOT_FOUND');
+    if (!feeder) throw new NotFoundError('Feeder not found', 'FEEDER_NOT_FOUND');
+
+    // Horizontal Zone-Scope Check:
+    // If caller is ZONE_MANAGER, verify that the feeder belongs to their assigned zone!
+    if (req.user.role === UserRole.ZONE_MANAGER) {
+      const substation = store.substations.get(feeder.substationId);
+      if (!substation || substation.zoneId !== req.user.zoneId) {
+        throw new ForbiddenError(
+          'Forbidden: You can only submit upgrade requests for feeders within your assigned zone',
+          'ZONE_ACCESS_DENIED'
+        );
+      }
+    }
 
     const reqId = `req_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const now = new Date().toISOString();
