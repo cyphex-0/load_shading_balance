@@ -152,6 +152,15 @@ export const updateUserAdminSchema = z.object({
   assignedZoneId: z.string().nullable().optional()
 });
 
+export const updateUserRoleSchema = z.object({
+  role: z.nativeEnum(UserRole),
+  assignedZoneId: z.string().nullable().optional()
+});
+
+export const updateUserStatusSchema = z.object({
+  status: z.nativeEnum(UserStatus)
+});
+
 // ============================================================================
 // Phase 6: Pagination, Query Filters, and Path Parameter Validators
 // ============================================================================
