@@ -3,7 +3,10 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { config } from './config';
+import { requestIdMiddleware } from './middleware/request-id';
+import { securityHeadersMiddleware } from './middleware/security';
 import { errorHandler } from './middleware/error';
+import { logger } from './utils/logger';
 import { systemRouter } from './modules/system.router';
 import { authRouter } from './modules/auth.router';
 import { usersRouter } from './modules/users.router';
@@ -18,7 +21,22 @@ import { errorResponse } from './utils/response';
 export const createApp = () => {
   const app = express();
 
-  // Core Middlewares
+  // 1. Request correlation ID & Security Headers
+  app.use(requestIdMiddleware);
+  app.use(securityHeadersMiddleware);
+
+  // 2. HTTP Access Logger
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const reqId = req.id ? `[${req.id.slice(0, 8)}]` : '';
+      logger.info(`[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms ${reqId}`);
+    });
+    next();
+  });
+
+  // 3. Core Middlewares
   app.use(
     cors({
       origin: [config.frontendUrl, 'http://localhost:3000', 'http://127.0.0.1:3000'],
@@ -26,13 +44,13 @@ export const createApp = () => {
     })
   );
   app.use(cookieParser());
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-  // Serve static uploaded photos
+  // 4. Serve static uploaded photos
   app.use('/uploads', express.static(config.upload.directory));
 
-  // Mount API Routers (Canonical /api/v1 with /api backward compatibility)
+  // 5. Mount API Routers (Canonical /api/v1 with /api backward compatibility)
   const apiRouters = [
     systemRouter,
     authRouter,
@@ -50,12 +68,12 @@ export const createApp = () => {
     app.use('/api', router);
   }
 
-  // 404 Handler
+  // 6. 404 Handler
   app.use((req, res) => {
     return errorResponse(res, `Route ${req.method} ${req.originalUrl} not found`, 404, 'NOT_FOUND');
   });
 
-  // Centralized Error Handler
+  // 7. Centralized Error Handler
   app.use(errorHandler);
 
   return app;

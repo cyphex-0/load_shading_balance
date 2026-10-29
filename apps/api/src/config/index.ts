@@ -1,25 +1,26 @@
-import dotenv from 'dotenv';
 import path from 'path';
+import { parseEnv } from './env';
 
-// Load .env from root or apps/api
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
-dotenv.config();
+const env = parseEnv();
 
 export const config = {
-  port: parseInt(process.env.API_PORT || '4000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  authSecret: process.env.AUTH_SECRET || 'super-secret-jwt-key-minimum-32-characters-long',
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-  databaseUrl: process.env.DATABASE_URL || '',
-  redisUrl: process.env.REDIS_URL || '',
+  port: env.PORT || env.API_PORT,
+  nodeEnv: env.NODE_ENV,
+  authSecret: env.AUTH_SECRET,
+  frontendUrl: env.FRONTEND_URL,
+  databaseUrl: env.DATABASE_URL,
+  redisUrl: env.REDIS_URL,
+  operationalTimeZone: env.OPERATIONAL_TIME_ZONE,
+  enableDemoSimulation: env.ENABLE_DEMO_SIMULATION,
   twilio: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-    authToken: process.env.TWILIO_AUTH_TOKEN || '',
-    phoneNumber: process.env.TWILIO_PHONE_NUMBER || ''
+    accountSid: env.TWILIO_ACCOUNT_SID,
+    authToken: env.TWILIO_AUTH_TOKEN,
+    phoneNumber: env.TWILIO_PHONE_NUMBER
   },
   upload: {
-    directory: path.resolve(__dirname, '../../uploads'),
-    maxFileSize: 10 * 1024 * 1024 // 10MB
+    directory: env.UPLOAD_DIR || path.resolve(__dirname, '../../uploads'),
+    maxFileSize: env.MAX_FILE_SIZE
   }
 };
 
+export { parseEnv } from './env';

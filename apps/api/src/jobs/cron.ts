@@ -1,15 +1,17 @@
-import cron from 'node-cron';
+import cron, { ScheduledTask } from 'node-cron';
 import { DeliveryStatus, FeederStatus } from '@load-shedding/shared';
 import { store } from '../db/store';
 import { notificationService } from '../services/notification.service';
 import { socketEmitter } from '../sockets/socket.server';
 import { logger } from '../utils/logger';
 
+const activeTasks: ScheduledTask[] = [];
+
 export const startBackgroundJobs = () => {
   logger.info('Initializing background cron jobs...');
 
   // Job 1: sendNotificationsJob (Every 30 seconds)
-  cron.schedule('*/30 * * * * *', async () => {
+  const task1 = cron.schedule('*/30 * * * * *', async () => {
     try {
       const pendingLogs = Array.from(store.notificationDeliveryLogs.values()).filter(
         (l) => l.status === DeliveryStatus.QUEUED && l.attempts < 3
@@ -24,9 +26,10 @@ export const startBackgroundJobs = () => {
       logger.error('Error in sendNotificationsJob:', err?.message);
     }
   });
+  activeTasks.push(task1);
 
   // Job 2: scheduleEnforcerJob (Hourly - 0 * * * *)
-  cron.schedule('0 * * * *', async () => {
+  const task2 = cron.schedule('0 * * * *', async () => {
     try {
       logger.info('Running scheduleEnforcerJob...');
       const now = new Date();
@@ -84,9 +87,10 @@ export const startBackgroundJobs = () => {
       logger.error('Error in scheduleEnforcerJob:', err?.message);
     }
   });
+  activeTasks.push(task2);
 
   // Job 3: gridMetricsSimulationJob (Every 5 minutes)
-  cron.schedule('*/5 * * * *', () => {
+  const task3 = cron.schedule('*/5 * * * *', () => {
     try {
       // Simulate realistic national grid fluctuations
       const baseDemand = 12000;
@@ -120,5 +124,10 @@ export const startBackgroundJobs = () => {
       logger.error('Error in gridMetricsSimulationJob:', err?.message);
     }
   });
+  activeTasks.push(task3);
 };
 
+export const stopBackgroundJobs = () => {
+  activeTasks.forEach((task) => task.stop());
+  activeTasks.length = 0;
+};

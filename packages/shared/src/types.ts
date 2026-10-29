@@ -15,6 +15,7 @@ export interface ApiResponse<T = any> {
   data: T | null;
   error: ApiError | null;
   timestamp: string;
+  requestId?: string;
 }
 
 export interface ApiError {

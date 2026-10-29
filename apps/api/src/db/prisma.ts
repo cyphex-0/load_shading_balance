@@ -29,3 +29,10 @@ export const checkDatabaseConnection = async (): Promise<boolean> => {
   }
 };
 
+export const disconnectDatabase = async (): Promise<void> => {
+  try {
+    await prisma.$disconnect();
+  } catch (error: any) {
+    logger.warn('Database disconnect warning:', error?.message);
+  }
+};

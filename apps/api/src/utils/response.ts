@@ -16,11 +16,13 @@ export class AppError extends Error {
 }
 
 export const successResponse = <T>(res: Response, data: T, statusCode = 200): Response => {
+  const req = (res as any).req;
   const envelope: ApiResponse<T> = {
     success: true,
     data,
     error: null,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    requestId: req?.id
   };
   return res.status(statusCode).json(envelope);
 };
@@ -32,6 +34,7 @@ export const errorResponse = (
   code = 'ERROR',
   details?: any[]
 ): Response => {
+  const req = (res as any).req;
   const errorObj: ApiError = {
     code,
     message,
@@ -42,8 +45,8 @@ export const errorResponse = (
     success: false,
     data: null,
     error: errorObj,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    requestId: req?.id
   };
   return res.status(statusCode).json(envelope);
 };
-

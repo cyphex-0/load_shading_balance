@@ -4,7 +4,7 @@ import { checkDatabaseConnection } from '../db/prisma';
 
 export const systemRouter = Router();
 
-// Endpoint 1: GET /api/health
+// Smoke test: GET /health (available at /api/health and /api/v1/health)
 systemRouter.get('/health', async (req, res) => {
   const dbConnected = await checkDatabaseConnection();
   return successResponse(res, {
@@ -17,13 +17,17 @@ systemRouter.get('/health', async (req, res) => {
   });
 });
 
-// Endpoint 2: GET /api/v1/health/live
-systemRouter.get('/v1/health/live', (req, res) => {
-  return successResponse(res, { status: 'LIVE', timestamp: new Date().toISOString() });
+// Liveness probe: GET /health/live (available at /api/health/live and /api/v1/health/live)
+systemRouter.get(['/health/live', '/v1/health/live'], (req, res) => {
+  return successResponse(res, {
+    status: 'LIVE',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
-// Endpoint 3: GET /api/v1/health/ready
-systemRouter.get('/v1/health/ready', async (req, res) => {
+// Readiness probe: GET /health/ready (available at /api/health/ready and /api/v1/health/ready)
+systemRouter.get(['/health/ready', '/v1/health/ready'], async (req, res) => {
   const dbConnected = await checkDatabaseConnection();
   return successResponse(res, {
     ready: true,
@@ -31,4 +35,3 @@ systemRouter.get('/v1/health/ready', async (req, res) => {
     redis: 'READY'
   });
 });
-
