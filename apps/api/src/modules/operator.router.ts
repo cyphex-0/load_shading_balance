@@ -3,7 +3,9 @@ import {
   generateScheduleDraftSchema,
   adjustSlotSchema,
   assignTechnicianSchema,
+  activeOutagesQuerySchema,
   UserRole,
+  FeederStatus,
   OutageStatus,
   AssignmentStatus
 } from '@load-shedding/shared';
@@ -13,6 +15,7 @@ import { successResponse, paginatedResponse, AppError } from '../utils/response'
 import { schedulerService } from '../services/scheduler.service';
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from '../services/notification.service';
+import { gridService } from '../services/grid.service';
 
 export const operatorRouter = Router();
 
@@ -99,41 +102,191 @@ operatorRouter.post('/operator/schedules/:id/cancel', opAuth, async (req, res, n
   }
 });
 
-// Endpoint 35: GET /api/operator/overview
-operatorRouter.get('/operator/overview', opAuth, (req, res) => {
+// ============================================================================
+// Endpoint 30: GET /api/v1/operator/grid-overview (SCADA Control Room Overview)
+// ============================================================================
+const handleGridOverview = (req: any, res: any) => {
   const latestMetric = store.gridMetrics[store.gridMetrics.length - 1] || {
-    totalDemandMW: 12400,
-    availableCapacityMW: 11100,
+    id: 'gm_default',
+    totalDemandMW: 12500,
+    availableCapacityMW: 11200,
     currentDeficitMW: 1300,
     activeOutagesCount: 0,
     timestamp: new Date().toISOString()
   };
 
-  const activeOutages = Array.from(store.outageTickets.values()).filter(
-    (t) => t.status !== 'RESOLVED' && t.status !== 'CANCELLED'
+  const currentDeficitMW = Math.max(
+    0,
+    latestMetric.totalDemandMW - latestMetric.availableCapacityMW
   );
 
-  const activePlannedOutages = Array.from(store.feeders.values()).filter(
-    (f) => f.status === 'PLANNED_OUTAGE' && !f.deletedAt
+  const feederCounts = gridService.getFeederHealthSummary();
+  const zoneBreakdown = gridService.getZoneHealthSummary();
+
+  const activeTickets = Array.from(store.outageTickets.values()).filter(
+    (t) => t.status !== OutageStatus.RESOLVED && t.status !== OutageStatus.CANCELLED
   );
 
-  const technicians = Array.from(store.users.values()).filter(
+  const allTechnicians = Array.from(store.users.values()).filter(
     (u) => u.role === UserRole.TECHNICIAN && u.status === 'ACTIVE' && !u.deletedAt
   );
 
-  return successResponse(res, {
-    metrics: latestMetric,
-    activePlannedOutagesCount: activePlannedOutages.length,
-    activeUnexpectedOutagesCount: activeOutages.length,
-    totalTechnicians: technicians.length,
-    activeOutages: activeOutages.slice(0, 10).map((t) => {
+  const activeAssignments = Array.from(store.technicianAssignments.values()).filter(
+    (a) => a.status !== AssignmentStatus.COMPLETED
+  );
+  const dispatchedTechIds = new Set(activeAssignments.map((a) => a.technicianId));
+  const dispatchedCount = allTechnicians.filter((t) => dispatchedTechIds.has(t.id)).length;
+
+  const responsePayload = {
+    metrics: {
+      ...latestMetric,
+      currentDeficitMW
+    },
+    feederCounts,
+    activeOutages: {
+      plannedCount: feederCounts.plannedOutage,
+      unplannedCount: activeTickets.length,
+      totalCount: feederCounts.plannedOutage + activeTickets.length
+    },
+    technicians: {
+      total: allTechnicians.length,
+      active: allTechnicians.length,
+      dispatched: dispatchedCount
+    },
+    zoneBreakdown,
+    // Legacy compatibility fields
+    activePlannedOutagesCount: feederCounts.plannedOutage,
+    activeUnexpectedOutagesCount: activeTickets.length,
+    totalTechnicians: allTechnicians.length,
+    activeOutagesList: activeTickets.slice(0, 10).map((t) => {
       const f = store.feeders.get(t.feederId);
       return {
         ...t,
         feederName: f?.name
       };
     })
-  });
+  };
+
+  return successResponse(res, responsePayload);
+};
+
+operatorRouter.get('/operator/grid-overview', opAuth, handleGridOverview);
+operatorRouter.get('/operator/overview', opAuth, handleGridOverview);
+
+// ============================================================================
+// Endpoint 37: GET /api/v1/operator/outages/active (Unified Live Offline Feeders)
+// ============================================================================
+operatorRouter.get('/operator/outages/active', opAuth, (req: any, res: any) => {
+  const query = activeOutagesQuerySchema.parse(req.query);
+
+  const offlineItems: any[] = [];
+  const processedFeederIds = new Set<string>();
+
+  // 1. Unplanned Emergency Outages (Outage Tickets)
+  if (!query.outageType || query.outageType === 'UNPLANNED') {
+    const activeTickets = Array.from(store.outageTickets.values()).filter(
+      (t) => t.status !== OutageStatus.RESOLVED && t.status !== OutageStatus.CANCELLED
+    );
+
+    for (const ticket of activeTickets) {
+      const feeder = store.feeders.get(ticket.feederId);
+      if (!feeder || feeder.deletedAt) continue;
+
+      const sub = store.substations.get(feeder.substationId);
+      const zone = sub ? store.zones.get(sub.zoneId) : null;
+
+      if (query.zoneId && sub?.zoneId !== query.zoneId) {
+        continue;
+      }
+
+      const assignment = Array.from(store.technicianAssignments.values()).find(
+        (a) => a.ticketId === ticket.id && a.status !== AssignmentStatus.COMPLETED
+      );
+      const tech = assignment ? store.users.get(assignment.technicianId) : null;
+      const impactedMeters = gridService.getConnectedMetersCount(feeder.id);
+
+      offlineItems.push({
+        id: `outage_ticket_${ticket.id}`,
+        feederId: feeder.id,
+        feederName: feeder.name,
+        feederCode: feeder.code,
+        capacityMW: feeder.capacityMW,
+        substationName: sub?.name || 'Unknown Substation',
+        zoneName: zone?.name || 'Unknown Zone',
+        outageType: 'UNPLANNED',
+        status: ticket.status,
+        startTime: ticket.reportedAt,
+        estimatedRestoration: null,
+        impactedMetersCount: impactedMeters,
+        ticket: {
+          id: ticket.id,
+          ticketNumber: ticket.ticketNumber,
+          description: ticket.description,
+          status: ticket.status,
+          reportedAt: ticket.reportedAt,
+          assignedTechnician: tech
+            ? {
+                id: tech.id,
+                name: tech.name,
+                phone: tech.phone || null
+              }
+            : null
+        },
+        scheduleSlot: null
+      });
+
+      processedFeederIds.add(feeder.id);
+    }
+  }
+
+  // 2. Planned Load Shedding Outages (Active Published Schedule Slots)
+  if (!query.outageType || query.outageType === 'PLANNED') {
+    const activeFeeders = Array.from(store.feeders.values()).filter((f) => !f.deletedAt);
+
+    for (const feeder of activeFeeders) {
+      // If feeder already processed as UNPLANNED, skip (fault precedence)
+      if (processedFeederIds.has(feeder.id)) continue;
+
+      const effective = gridService.getEffectiveFeederStatus(feeder.id);
+      if (effective.status !== FeederStatus.PLANNED_OUTAGE) continue;
+
+      const sub = store.substations.get(feeder.substationId);
+      const zone = sub ? store.zones.get(sub.zoneId) : null;
+
+      if (query.zoneId && sub?.zoneId !== query.zoneId) {
+        continue;
+      }
+
+      const impactedMeters = gridService.getConnectedMetersCount(feeder.id);
+
+      offlineItems.push({
+        id: `outage_slot_${feeder.id}_${effective.activeSlot?.slotId || Date.now()}`,
+        feederId: feeder.id,
+        feederName: feeder.name,
+        feederCode: feeder.code,
+        capacityMW: feeder.capacityMW,
+        substationName: sub?.name || 'Unknown Substation',
+        zoneName: zone?.name || 'Unknown Zone',
+        outageType: 'PLANNED',
+        status: 'LOAD_SHEDDING',
+        startTime: effective.activeSlot?.startTime || feeder.updatedAt,
+        estimatedRestoration: effective.activeSlot?.endTime || null,
+        impactedMetersCount: impactedMeters,
+        ticket: null,
+        scheduleSlot: effective.activeSlot || null
+      });
+    }
+  }
+
+  // Sort by startTime descending
+  offlineItems.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+
+  const page = query.page || 1;
+  const pageSize = query.pageSize || 20;
+  const total = offlineItems.length;
+  const paginated = offlineItems.slice((page - 1) * pageSize, page * pageSize);
+
+  return paginatedResponse(res, paginated, total, page, pageSize);
 });
 
 // Endpoint 36: GET /api/operators/outage-reports
