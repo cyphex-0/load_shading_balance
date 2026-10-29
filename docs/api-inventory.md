@@ -164,3 +164,4 @@ This document catalogs all **81 REST API Endpoints** and aliases specified in `e
 1. `sendNotificationsJob`: Runs `*/30 * * * * *` (every 30 seconds) to flush SMS queue.
 2. `scheduleEnforcerJob`: Runs `0 * * * *` (hourly) to toggle scheduled outages.
 3. `gridMetricsSimulationJob`: Runs `*/5 * * * *` (every 5 minutes) to update demonstration grid demand.
+

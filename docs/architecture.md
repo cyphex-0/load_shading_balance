@@ -204,3 +204,4 @@ To handle massive concurrent read traffic during peak load shedding:
   - TTL: 60 seconds.
   - Automatically invalidated on `feeder:status_changed` or ticket resolution.
 - **Resilience:** If Redis is down or unreachable, the system falls back seamlessly to direct PostgreSQL queries with zero customer-facing downtime.
+

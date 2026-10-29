@@ -1,0 +1,73 @@
+export enum UserRole {
+  CUSTOMER = 'CUSTOMER',
+  POWER_OPERATOR = 'POWER_OPERATOR',
+  TECHNICIAN = 'TECHNICIAN',
+  ZONE_MANAGER = 'ZONE_MANAGER',
+  ADMIN = 'ADMIN'
+}
+
+export enum UserStatus {
+  ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+  PENDING = 'PENDING'
+}
+
+export enum FeederStatus {
+  ONLINE = 'ONLINE',
+  PLANNED_OUTAGE = 'PLANNED_OUTAGE',
+  UNEXPECTED_FAULT = 'UNEXPECTED_FAULT'
+}
+
+export enum ScheduleStatus {
+  DRAFT = 'DRAFT',
+  PUBLISHED = 'PUBLISHED',
+  CANCELLED = 'CANCELLED'
+}
+
+export enum OutageStatus {
+  REPORTED = 'REPORTED',
+  ASSIGNED = 'ASSIGNED',
+  EN_ROUTE = 'EN_ROUTE',
+  REPAIRING = 'REPAIRING',
+  RESOLVED = 'RESOLVED',
+  CANCELLED = 'CANCELLED'
+}
+
+export enum AssignmentStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  REASSIGNED = 'REASSIGNED'
+}
+
+export enum UpgradeRequestStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED'
+}
+
+export enum NotificationType {
+  PLANNED_SCHEDULE = 'PLANNED_SCHEDULE',
+  SCHEDULE_CANCELLED = 'SCHEDULE_CANCELLED',
+  OUTAGE_REPORTED = 'OUTAGE_REPORTED',
+  TECHNICIAN_DISPATCHED = 'TECHNICIAN_DISPATCHED',
+  REPAIR_STARTED = 'REPAIR_STARTED',
+  POWER_RESTORED = 'POWER_RESTORED',
+  UPGRADE_REQUEST_STATUS = 'UPGRADE_REQUEST_STATUS',
+  SYSTEM_ALERT = 'SYSTEM_ALERT'
+}
+
+export enum DeliveryStatus {
+  QUEUED = 'QUEUED',
+  SENT = 'SENT',
+  FAILED = 'FAILED'
+}
+
+export enum SocketEvent {
+  FEEDER_STATUS_CHANGED = 'feeder:status_changed',
+  TICKET_CREATED = 'ticket:created',
+  TICKET_ASSIGNED = 'ticket:assigned',
+  TICKET_STATUS_CHANGED = 'ticket:status_changed',
+  SCHEDULE_PUBLISHED = 'schedule:published'
+}

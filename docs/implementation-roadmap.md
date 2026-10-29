@@ -144,3 +144,4 @@
 - [ ] Build and verify Next.js production build (`npm run build`).
 - [ ] Build and verify Express API TypeScript compilation.
 - [ ] Provide complete demo credentials, seed scripts, and startup instructions in `README.md`.
+

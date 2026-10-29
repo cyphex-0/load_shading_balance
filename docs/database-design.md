@@ -348,3 +348,4 @@ enum DeliveryStatus {
 | | `currentDeficitMW`| Float | Power deficit |
 | | `activeOutagesCount`| Int | Active faults count |
 | | `timestamp` | DateTime | Default `now()` |
+

@@ -101,3 +101,4 @@ The system strictly enforces five primary roles:
 - **Security:** Argon2id/Bcrypt password hashing; HTTP-only secure SameSite cookies; RBAC and Zone-scoping middleware; rate limiting on auth endpoints; input validation with Zod.
 - **Performance:** Redis caching for public and customer schedule queries; database indexing on foreign keys (`feederId`, `zoneId`, `customerId`, `meterId`); server-side pagination.
 - **Reliability:** Atomic Prisma transactions for multi-record operations (schedule publication, ticket resolution); graceful fallback when external Twilio or Redis services are unavailable in local development.
+

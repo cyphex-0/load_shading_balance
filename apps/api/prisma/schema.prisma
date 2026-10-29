@@ -1,0 +1,440 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  CUSTOMER
+  POWER_OPERATOR
+  TECHNICIAN
+  ZONE_MANAGER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum FeederStatus {
+  ONLINE
+  PLANNED_OUTAGE
+  UNEXPECTED_FAULT
+}
+
+enum ScheduleStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum OutageStatus {
+  REPORTED
+  ASSIGNED
+  EN_ROUTE
+  REPAIRING
+  RESOLVED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  REASSIGNED
+}
+
+enum UpgradeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  PLANNED_SCHEDULE
+  SCHEDULE_CANCELLED
+  OUTAGE_REPORTED
+  TECHNICIAN_DISPATCHED
+  REPAIR_STARTED
+  POWER_RESTORED
+  UPGRADE_REQUEST_STATUS
+  SYSTEM_ALERT
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model User {
+  id             String      @id @default(uuid())
+  name           String
+  email          String      @unique
+  phone          String?
+  passwordHash   String
+  role           UserRole    @default(CUSTOMER)
+  status         UserStatus  @default(ACTIVE)
+  assignedZoneId String?
+  emailVerified  DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  deletedAt      DateTime?
+
+  assignedZone   Zone?       @relation("ZoneStaff", fields: [assignedZoneId], references: [id])
+  sessions       Session[]
+  meters         CustomerMeter[]
+  outages        OutageTicket[]        @relation("CustomerOutages")
+  assignments    TechnicianAssignment[] @relation("TechnicianAssigned")
+  createdAssignments TechnicianAssignment[] @relation("DispatcherAssignments")
+  createdSchedules LoadSheddingSchedule[]
+  upgradeRequests InfrastructureRequest[] @relation("RequesterRequests")
+  reviewedRequests InfrastructureRequest[] @relation("ReviewerRequests")
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@index([status])
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model VerificationToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
+model Zone {
+  id          String        @id @default(uuid())
+  name        String        @unique
+  code        String        @unique
+  description String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  substations Substation[]
+  staff       User[]        @relation("ZoneStaff")
+}
+
+model Substation {
+  id          String    @id @default(uuid())
+  name        String
+  code        String    @unique
+  zoneId      String
+  capacityMW  Float
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  zone        Zone      @relation(fields: [zoneId], references: [id], onDelete: Restrict)
+  feeders     Feeder[]
+
+  @@index([zoneId])
+}
+
+model Feeder {
+  id           String       @id @default(uuid())
+  name         String
+  code         String       @unique
+  substationId String
+  capacityMW   Float
+  isCritical   Boolean      @default(false)
+  status       FeederStatus @default(ONLINE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+
+  substation   Substation   @relation(fields: [substationId], references: [id], onDelete: Restrict)
+  meters       Meter[]
+  outages      OutageTicket[]
+  assignments  ScheduleFeederAssignment[]
+  upgradeRequests InfrastructureRequest[]
+
+  @@index([substationId])
+  @@index([status])
+  @@index([isCritical])
+}
+
+model Meter {
+  id          String    @id @default(uuid())
+  meterNumber String    @unique
+  feederId    String
+  address     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  feeder      Feeder    @relation(fields: [feederId], references: [id], onDelete: Restrict)
+  customers   CustomerMeter[]
+  outages     OutageTicket[]
+
+  @@index([feederId])
+}
+
+model CustomerMeter {
+  id         String    @id @default(uuid())
+  customerId String
+  meterId    String
+  isPrimary  Boolean   @default(false)
+  nickname   String?
+  linkedAt   DateTime  @default(now())
+  unlinkedAt DateTime?
+
+  customer   User      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  meter      Meter     @relation(fields: [meterId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, meterId])
+  @@index([customerId])
+  @@index([meterId])
+}
+
+model LoadSheddingSchedule {
+  id             String         @id @default(uuid())
+  planningDate   String
+  totalDeficitMW Float
+  status         ScheduleStatus @default(DRAFT)
+  createdById    String
+  publishedAt    DateTime?
+  cancelledAt    DateTime?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  slots          ScheduleSlot[]
+
+  @@index([planningDate])
+  @@index([status])
+}
+
+model ScheduleSlot {
+  id              String   @id @default(uuid())
+  scheduleId      String
+  startTime       DateTime
+  endTime         DateTime
+  targetDeficitMW Float
+  actualDeficitMW Float
+  createdAt       DateTime @default(now())
+
+  schedule        LoadSheddingSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  feeders         ScheduleFeederAssignment[]
+
+  @@index([scheduleId])
+  @@index([startTime, endTime])
+}
+
+model ScheduleFeederAssignment {
+  id        String       @id @default(uuid())
+  slotId    String
+  feederId  String
+  loadMW    Float
+  createdAt DateTime     @default(now())
+
+  slot      ScheduleSlot @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  feeder    Feeder       @relation(fields: [feederId], references: [id], onDelete: Cascade)
+
+  @@unique([slotId, feederId])
+  @@index([feederId])
+}
+
+model OutageTicket {
+  id              String       @id @default(uuid())
+  ticketNumber    String       @unique
+  customerId      String
+  meterId         String
+  feederId        String
+  description     String
+  landmark        String?
+  isPlanned       Boolean      @default(false)
+  status          OutageStatus @default(REPORTED)
+  reportedAt      DateTime     @default(now())
+  resolvedAt      DateTime?
+  resolutionNotes String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  customer        User         @relation("CustomerOutages", fields: [customerId], references: [id])
+  meter           Meter        @relation(fields: [meterId], references: [id])
+  feeder          Feeder       @relation(fields: [feederId], references: [id])
+  assignments     TechnicianAssignment[]
+  attachments     OutageAttachment[]
+  history         OutageStatusHistory[]
+
+  @@index([customerId])
+  @@index([feederId])
+  @@index([status])
+  @@index([reportedAt])
+}
+
+model TechnicianAssignment {
+  id           String           @id @default(uuid())
+  ticketId     String
+  technicianId String
+  assignedById String
+  status       AssignmentStatus @default(PENDING)
+  assignedAt   DateTime         @default(now())
+  acceptedAt   DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  ticket       OutageTicket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  technician   User             @relation("TechnicianAssigned", fields: [technicianId], references: [id])
+  assignedBy   User             @relation("DispatcherAssignments", fields: [assignedById], references: [id])
+
+  @@index([ticketId])
+  @@index([technicianId])
+  @@index([status])
+}
+
+model OutageAttachment {
+  id        String       @id @default(uuid())
+  ticketId  String
+  uploaderId String
+  fileUrl   String
+  fileName  String
+  fileType  String
+  fileSize  Int
+  createdAt DateTime     @default(now())
+
+  ticket    OutageTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model OutageStatusHistory {
+  id             String        @id @default(uuid())
+  ticketId       String
+  previousStatus OutageStatus?
+  newStatus      OutageStatus
+  changedById    String?
+  notes          String?
+  createdAt      DateTime      @default(now())
+
+  ticket         OutageTicket  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model InfrastructureRequest {
+  id                String               @id @default(uuid())
+  requesterId       String
+  feederId          String
+  reason            String
+  proposedAction    String
+  supportingMetrics Json
+  status            UpgradeRequestStatus @default(PENDING)
+  adminNotes        String?
+  reviewedById      String?
+  reviewedAt        DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  requester         User                 @relation("RequesterRequests", fields: [requesterId], references: [id])
+  feeder            Feeder               @relation(fields: [feederId], references: [id])
+  reviewedBy        User?                @relation("ReviewerRequests", fields: [reviewedById], references: [id])
+
+  @@index([feederId])
+  @@index([status])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      NotificationType
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs      NotificationDeliveryLog[]
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model NotificationDeliveryLog {
+  id               String         @id @default(uuid())
+  notificationId   String?
+  recipientPhone   String
+  channel          String
+  status           DeliveryStatus @default(QUEUED)
+  providerResponse String?
+  attempts         Int            @default(0)
+  sentAt           DateTime?
+  createdAt        DateTime       @default(now())
+
+  notification     Notification?  @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model GridMetrics {
+  id                  String   @id @default(uuid())
+  totalDemandMW       Float
+  availableCapacityMW Float
+  currentDeficitMW    Float
+  activeOutagesCount  Int
+  timestamp           DateTime @default(now())
+
+  @@index([timestamp])
+}
