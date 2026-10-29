@@ -32,16 +32,23 @@ export const createApp = () => {
   // Serve static uploaded photos
   app.use('/uploads', express.static(config.upload.directory));
 
-  // Mount API Routers
-  app.use('/api', systemRouter);
-  app.use('/api', authRouter);
-  app.use('/api', usersRouter);
-  app.use('/api', gridRouter);
-  app.use('/api', customerRouter);
-  app.use('/api', operatorRouter);
-  app.use('/api', technicianRouter);
-  app.use('/api', managerRouter);
-  app.use('/api', adminRouter);
+  // Mount API Routers (Canonical /api/v1 with /api backward compatibility)
+  const apiRouters = [
+    systemRouter,
+    authRouter,
+    usersRouter,
+    gridRouter,
+    customerRouter,
+    operatorRouter,
+    technicianRouter,
+    managerRouter,
+    adminRouter
+  ];
+
+  for (const router of apiRouters) {
+    app.use('/api/v1', router);
+    app.use('/api', router);
+  }
 
   // 404 Handler
   app.use((req, res) => {
@@ -53,4 +60,3 @@ export const createApp = () => {
 
   return app;
 };
-
