@@ -74,26 +74,52 @@ export const requireRoles = (...roles: UserRole[]) => {
   };
 };
 
-export const requireZoneAccess = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.user) {
-    return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
-  }
+/**
+ * Convenient singular alias for requireRoles
+ */
+export const requireRole = requireRoles;
 
-  // Admins have universal zone access
-  if (req.user.role === UserRole.ADMIN) {
-    return next();
-  }
+/**
+ * Express middleware to verify that the authenticated user has access to the target zone.
+ * Admins and Power Operators have universal/global access.
+ * Zone Managers and Technicians are restricted to their assigned zone.
+ */
+export const verifyZoneScope = (
+  resolveZoneId?: (req: Request) => string | undefined | null
+) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+    }
 
-  // Zone managers are restricted to their assigned zone
-  if (req.user.role === UserRole.ZONE_MANAGER) {
-    const targetZoneId = req.params.zoneId || req.query.zoneId || req.body.zoneId;
+    // Admins and Operators have global grid scope
+    if (req.user.role === UserRole.ADMIN || req.user.role === UserRole.POWER_OPERATOR) {
+      return next();
+    }
+
+    // Determine target zone ID from resolver callback or standard request properties
+    const targetZoneId =
+      (resolveZoneId ? resolveZoneId(req) : undefined) ||
+      req.params.zoneId ||
+      (req.query.zoneId as string) ||
+      req.body?.zoneId;
+
     if (targetZoneId && req.user.zoneId && targetZoneId !== req.user.zoneId) {
       return next(
-        new AppError('Forbidden: You can only access resources within your assigned zone', 403, 'ZONE_ACCESS_DENIED')
+        new AppError(
+          'Forbidden: You can only access resources within your assigned zone',
+          403,
+          'ZONE_ACCESS_DENIED'
+        )
       );
     }
-  }
 
-  next();
+    next();
+  };
 };
+
+/**
+ * Default zone access guard checking req.params.zoneId, req.query.zoneId, or req.body.zoneId
+ */
+export const requireZoneAccess = verifyZoneScope();
 
