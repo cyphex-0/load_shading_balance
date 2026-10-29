@@ -11,6 +11,8 @@ import {
   createMeterSchema,
   provisionUserSchema,
   updateUserAdminSchema,
+  updateUserRoleSchema,
+  updateUserStatusSchema,
   reviewInfrastructureRequestSchema,
   UserRole,
   UserStatus
@@ -526,10 +528,73 @@ adminRouter.patch('/admin/users/:id', (req: any, res, next) => {
   }
 });
 
-// Endpoint 76: DELETE /api/admin/users/:id
+// Endpoint 76: PATCH /api/admin/users/:id/role (Reassign role and optional zone scope)
+adminRouter.patch('/admin/users/:id/role', (req: any, res, next) => {
+  try {
+    const data = updateUserRoleSchema.parse(req.body);
+    const user = store.users.get(req.params.id);
+    if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
+
+    const effectiveZoneId = data.assignedZoneId !== undefined ? data.assignedZoneId : user.assignedZoneId;
+    if (data.role === UserRole.ZONE_MANAGER && !effectiveZoneId) {
+      throw new BadRequestError('Zone Manager must have an assigned zone', 'ZONE_REQUIRED');
+    }
+
+    if (data.assignedZoneId) {
+      const zone = store.zones.get(data.assignedZoneId);
+      if (!zone || zone.deletedAt) {
+        throw new NotFoundError('Assigned zone not found', 'ZONE_NOT_FOUND');
+      }
+    }
+
+    user.role = data.role;
+    if (data.assignedZoneId !== undefined) {
+      user.assignedZoneId = data.assignedZoneId;
+    }
+    user.updatedAt = new Date().toISOString();
+
+    logAudit(req.user.sub, 'UPDATE_USER_ROLE', 'User', user.id, {
+      role: user.role,
+      assignedZoneId: user.assignedZoneId
+    });
+
+    return successResponse(res, toSafeUser(user));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Endpoint 77: PATCH /api/admin/users/:id/status (Toggle ACTIVE / SUSPENDED status)
+adminRouter.patch('/admin/users/:id/status', (req: any, res, next) => {
+  try {
+    const data = updateUserStatusSchema.parse(req.body);
+    const user = store.users.get(req.params.id);
+    if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
+
+    if (user.id === req.user.sub && data.status === UserStatus.SUSPENDED) {
+      throw new BadRequestError('Cannot suspend your own administrator account', 'SELF_SUSPENSION_FORBIDDEN');
+    }
+
+    user.status = data.status;
+    user.updatedAt = new Date().toISOString();
+
+    logAudit(req.user.sub, 'UPDATE_USER_STATUS', 'User', user.id, { status: user.status });
+
+    return successResponse(res, toSafeUser(user));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Endpoint 78: DELETE /api/admin/users/:id
 adminRouter.delete('/admin/users/:id', (req: any, res) => {
   const user = store.users.get(req.params.id);
-  if (!user || user.deletedAt) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
+
+  // Prevent admin self-deletion
+  if (user.id === req.user.sub) {
+    throw new BadRequestError('Cannot delete your own administrator account', 'SELF_DELETION_FORBIDDEN');
+  }
 
   // Prevent deleting technician with active tasks
   if (user.role === UserRole.TECHNICIAN) {
@@ -537,7 +602,16 @@ adminRouter.delete('/admin/users/:id', (req: any, res) => {
       (a) => a.technicianId === user.id && a.status !== 'COMPLETED'
     );
     if (hasActiveTasks) {
-      throw new AppError('Cannot delete technician with active assignments. Reassign first.', 400, 'ACTIVE_TASKS_EXIST');
+      throw new BadRequestError('Cannot delete technician with active assignments. Reassign first.', 'ACTIVE_TASKS_EXIST');
+    }
+  }
+
+  // If customer is deleted, soft-unlink their meters
+  if (user.role === UserRole.CUSTOMER) {
+    for (const cm of store.customerMeters.values()) {
+      if (cm.customerId === user.id && !cm.unlinkedAt) {
+        cm.unlinkedAt = new Date().toISOString();
+      }
     }
   }
 
@@ -546,10 +620,14 @@ adminRouter.delete('/admin/users/:id', (req: any, res) => {
   return successResponse(res, { message: 'User deleted successfully' });
 });
 
-// Endpoint 77: POST /api/admin/users/:id/suspend
+// Alias: POST /api/admin/users/:id/suspend
 adminRouter.post('/admin/users/:id/suspend', (req: any, res) => {
   const user = store.users.get(req.params.id);
-  if (!user || user.deletedAt) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
+
+  if (user.id === req.user.sub) {
+    throw new BadRequestError('Cannot suspend your own administrator account', 'SELF_SUSPENSION_FORBIDDEN');
+  }
 
   user.status = UserStatus.SUSPENDED;
   user.updatedAt = new Date().toISOString();
@@ -558,10 +636,10 @@ adminRouter.post('/admin/users/:id/suspend', (req: any, res) => {
   return successResponse(res, { success: true, message: `User ${user.email} suspended.` });
 });
 
-// Endpoint 78: POST /api/admin/users/:id/reactivate
+// Alias: POST /api/admin/users/:id/reactivate
 adminRouter.post('/admin/users/:id/reactivate', (req: any, res) => {
   const user = store.users.get(req.params.id);
-  if (!user || user.deletedAt) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
 
   user.status = UserStatus.ACTIVE;
   user.updatedAt = new Date().toISOString();
