@@ -66,6 +66,22 @@ export interface UserDto {
   updatedAt: string;
 }
 
+export interface LinkedMeterSummaryDto {
+  id: string;
+  meterId: string;
+  meterNumber: string;
+  address: string;
+  isPrimary: boolean;
+  nickname?: string | null;
+  feederName?: string | null;
+  zoneName?: string | null;
+}
+
+export interface UserProfileDto extends UserDto {
+  zone?: { id: string; name: string; code: string } | null;
+  meters: LinkedMeterSummaryDto[];
+}
+
 export interface AuthResultDto {
   token: string;
   user: UserDto;
@@ -222,6 +238,10 @@ export interface NotificationDto {
   readAt?: string | null;
   metadata?: Record<string, any> | null;
   createdAt: string;
+}
+
+export interface NotificationListResponse extends PaginatedData<NotificationDto> {
+  unreadCount: number;
 }
 
 export interface GridMetricsDto {
