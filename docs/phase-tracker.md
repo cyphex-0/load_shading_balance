@@ -12,7 +12,7 @@ This document tracks implementation progress across all 26 phases of the **Load 
 | **1** | Requirements Baseline, Route Contract, and Decision Register | **VERIFIED** | Canonical routes in `docs/api.md`, end-to-end mapping in `docs/traceability.md`, decisions in `docs/decisions.md` |
 | **2** | Backend Package, TypeScript, Test Runner, and CI Baseline | **VERIFIED** | CI workflow `.github/workflows/backend-ci.yml`, `typecheck` script, `apps/api/README.md` |
 | **3** | Environment Validation, Logging, Security Defaults, and HTTP Bootstrap | **VERIFIED** | Zod env parsing (`env.ts`), correlation requestId, security headers, graceful shutdown, health probes |
-| **4** | Base Prisma Schema and Relational Grid Hierarchy | **VERIFIED** | `apps/api/prisma/schema.prisma` with 14 models ($\text{Zone} \to \text{Substation} \to \text{Feeder} \to \text{Transformer} \to \text{Meter}$) |
+| **4** | Base Prisma Schema and Relational Grid Hierarchy | **VERIFIED** | `apps/api/prisma/schema.prisma` with 21 models, canonical `docs/database.md`, ERD, and foreign key rules ($\text{Zone} \to \text{Substation} \to \text{Feeder} \to \text{Meter} \to \text{CustomerMeter}$) |
 | **5** | Database Access Layer, Transactions, Seed Data, and Test Fixtures | **VERIFIED** | `apps/api/src/db/store.ts` (in-memory mock store) & `prisma/seed.ts` |
 | **6** | Validation, Pagination, API Errors, and Shared HTTP Contracts | **VERIFIED** | `packages/shared/src/validators.ts`, standard JSON response envelopes in `response.ts` |
 | **7** | Authentication APIs and Auth.js / Express Integration | **VERIFIED** | Register, login, refresh, me endpoints in `auth.router.ts` & `auth.ts` middleware |
