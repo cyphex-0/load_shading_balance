@@ -142,3 +142,4 @@ export const socketEmitter = {
     io.emit(SocketEvent.SCHEDULE_PUBLISHED, data);
   }
 };
+

@@ -2,23 +2,77 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hallmark & Apple Design System Tokens */
 :root {
   --background: #f8fafc;
-  --foreground: #0f172a;
+  --foreground: #090d16;
+  --surface-card: rgba(255, 255, 255, 0.85);
+  --surface-card-border: rgba(226, 232, 240, 0.9);
+  --surface-elevated: #ffffff;
+  --color-accent: #f59e0b;
+  --color-accent-subtle: rgba(245, 158, 11, 0.1);
+  --color-online: #10b981;
+  --color-planned: #f59e0b;
+  --color-fault: #ef4444;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #090d16;
+    --background: #070b12;
     --foreground: #f8fafc;
+    --surface-card: rgba(15, 23, 42, 0.75);
+    --surface-card-border: rgba(30, 41, 59, 0.8);
+    --surface-elevated: #0f172a;
+    --color-accent: #fbbf24;
+    --color-accent-subtle: rgba(251, 191, 36, 0.12);
   }
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+}
+
+/* Tabular numbers for telemetry, clocks, and capacity gauges */
+.font-mono-numbers {
+  font-feature-settings: "tnum" 1, "zero" 1;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Glassmorphic utility panels */
+.glass-panel {
+  background: var(--surface-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--surface-card-border);
+}
+
+.glass-card-hover {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+
+.glass-card-hover:hover {
+  transform: translateY(-2px);
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.08), 0 0 15px 0 rgba(245, 158, 11, 0.08);
+}
+
+/* Ambient glow accents */
+.ambient-glow-amber {
+  box-shadow: 0 0 30px -5px rgba(245, 158, 11, 0.15);
+}
+
+.ambient-glow-emerald {
+  box-shadow: 0 0 30px -5px rgba(16, 185, 129, 0.15);
+}
+
+.ambient-glow-rose {
+  box-shadow: 0 0 30px -5px rgba(239, 68, 68, 0.15);
 }
 
 /* Custom scrollbars */
@@ -30,9 +84,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.3);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.6);
+  background: rgba(100, 116, 139, 0.5);
 }

@@ -438,3 +438,4 @@ model GridMetrics {
 
   @@index([timestamp])
 }
+

@@ -147,3 +147,4 @@ export const updateUserAdminSchema = z.object({
   status: z.nativeEnum(UserStatus).optional(),
   assignedZoneId: z.string().nullable().optional()
 });
+

@@ -128,3 +128,4 @@ usersRouter.patch('/notifications/read-all', authenticateUser, (req: any, res) =
 
   return successResponse(res, { success: true, count: updatedCount });
 });
+

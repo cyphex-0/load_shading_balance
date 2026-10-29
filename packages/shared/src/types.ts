@@ -204,3 +204,4 @@ export interface GridMetricsDto {
   activeOutagesCount: number;
   timestamp: string;
 }
+

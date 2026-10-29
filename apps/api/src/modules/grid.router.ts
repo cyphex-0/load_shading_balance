@@ -88,3 +88,4 @@ gridRouter.get('/grid/status', async (req, res) => {
   await cacheService.set(cacheKey, summary, 30); // 30-second cache
   return successResponse(res, summary);
 });
+

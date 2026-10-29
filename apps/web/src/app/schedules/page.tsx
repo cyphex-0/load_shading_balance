@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Clock, Calendar, Zap, RefreshCw, Search } from 'lucide-react';
+import { Clock, Calendar, Zap, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import { ApiClient } from '../../lib/api';
 
 export default function PublicSchedulesPage() {
   const [feeders, setFeeders] = useState<any[]>([]);
   const [zones, setZones] = useState<any[]>([]);
   const [selectedZone, setSelectedZone] = useState('ALL');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
   const fetchPublicGrid = async () => {
@@ -27,85 +28,124 @@ export default function PublicSchedulesPage() {
   }, []);
 
   const filteredFeeders = feeders.filter((f) => {
-    if (selectedZone === 'ALL') return true;
-    return f.zoneId === selectedZone;
+    const matchesZone = selectedZone === 'ALL' || f.zoneId === selectedZone;
+    const matchesSearch =
+      f.name.toLowerCase().includes(search.toLowerCase()) ||
+      f.code.toLowerCase().includes(search.toLowerCase());
+    return matchesZone && matchesSearch;
   });
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-12">
       {/* Header */}
-      <div className="space-y-2">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Clock className="h-6 w-6 text-amber-500" />
-          Public Load Shedding Schedules & Rotations
-        </h1>
-        <p className="text-xs text-slate-500">
-          Official load-shedding timetables published by national electricity distribution authorities. High-speed cache enabled.
-        </p>
-      </div>
-
-      {/* Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm text-xs">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-slate-500">Filter by City Zone:</span>
-          <select
-            value={selectedZone}
-            onChange={(e) => setSelectedZone(e.target.value)}
-            className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-medium"
-          >
-            <option value="ALL">All City Zones</option>
-            {zones.map((z) => (
-              <option key={z.id} value={z.id}>{z.name} ({z.code})</option>
-            ))}
-          </select>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 dark:border-slate-800/80 pb-5">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+            <span className="text-[11px] font-mono font-semibold text-slate-400 uppercase tracking-wider">
+              Transparency Portal
+            </span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
+            <Clock className="h-6 w-6 text-amber-500" />
+            Public Load Shedding Timetables
+          </h1>
+          <p className="text-xs text-slate-500">
+            Official scheduled power rotation timetables published by national electricity distribution authorities. High-speed Redis edge cache.
+          </p>
         </div>
 
         <button
           onClick={fetchPublicGrid}
-          className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 flex items-center gap-1.5 self-start"
+          className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-mono font-semibold flex items-center gap-2 self-start transition-colors"
         >
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh Schedule
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> REFRESH CACHE
         </button>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="glass-panel p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs border border-slate-200/80 dark:border-slate-800/80">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-500">City District:</span>
+            <select
+              value={selectedZone}
+              onChange={(e) => setSelectedZone(e.target.value)}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/70 text-slate-900 dark:text-white font-medium focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="ALL">All City Zones ({feeders.length} Feeders)</option>
+              {zones.map((z) => (
+                <option key={z.id} value={z.id}>
+                  {z.name} ({z.code})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-3 top-2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search feeder..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 pr-3 py-1 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/70 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 w-40 sm:w-56"
+            />
+          </div>
+        </div>
+
+        <span className="text-[11px] font-mono text-slate-400">
+          SHOWING {filteredFeeders.length} LINES
+        </span>
       </div>
 
       {/* Schedule Rotation Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
-          <div className="col-span-full py-12 text-center text-xs text-slate-400">Loading schedules...</div>
+          <div className="col-span-full py-16 text-center text-xs font-mono text-slate-400">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-solid border-amber-500 border-r-transparent mb-2" />
+            <p>FETCHING SCHEDULED TIMETABLES...</p>
+          </div>
         ) : filteredFeeders.length === 0 ? (
-          <div className="col-span-full py-12 text-center text-xs text-slate-400">No schedules found for this selection.</div>
+          <div className="col-span-full py-12 text-center text-xs font-mono text-slate-400">
+            No feeder schedules found matching the filter criteria.
+          </div>
         ) : (
           filteredFeeders.map((f) => (
             <div
               key={f.id}
-              className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-3"
+              className="glass-panel p-5 rounded-3xl space-y-3.5 border border-slate-200/80 dark:border-slate-800/80 shadow-sm glass-card-hover"
             >
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-slate-900 dark:text-white">{f.name}</span>
-                <span className="font-mono text-xs text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded font-bold">
+                <span className="font-mono text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded font-bold border border-amber-500/20">
                   {f.code}
                 </span>
               </div>
 
-              <div className="text-xs space-y-1 text-slate-500">
-                <p><strong>District:</strong> {f.zoneName || 'City Zone'}</p>
-                <p><strong>Substation:</strong> {f.substationName || 'Central'}</p>
-                <p><strong>Capacity:</strong> {f.capacityMW} MW</p>
+              <div className="text-xs space-y-1.5 text-slate-500">
+                <p className="flex justify-between">
+                  <span>Substation:</span>
+                  <strong className="text-slate-700 dark:text-slate-300">{f.substationName || 'Central'}</strong>
+                </p>
+                <p className="flex justify-between">
+                  <span>Line Capacity:</span>
+                  <strong className="font-mono text-slate-700 dark:text-slate-300">{f.capacityMW} MW</strong>
+                </p>
               </div>
 
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+              <div className="pt-3 border-t border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between text-xs">
                 {f.isCritical ? (
-                  <span className="font-bold text-red-600 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded">
-                    Shielded Hospital Line (No Cuts)
+                  <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-purple-700 dark:text-purple-300 bg-purple-500/10 px-2.5 py-1 rounded-full border border-purple-500/25">
+                    <ShieldCheck className="h-3 w-3 text-purple-500" />
+                    Hospital Line (No Cuts)
                   </span>
                 ) : (
-                  <span className="font-semibold text-slate-600 dark:text-slate-300">
-                    Rotation Interval: 1 hr / slot
+                  <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                    Rotates Fairly 08:00 – 14:00
                   </span>
                 )}
-                <span className="text-[11px] font-mono font-medium text-emerald-600">
-                  {f.status === 'ONLINE' ? 'Currently Online' : f.status}
-                </span>
+                <span className="font-mono text-[10px] text-slate-400">1x/DAY MAX</span>
               </div>
             </div>
           ))

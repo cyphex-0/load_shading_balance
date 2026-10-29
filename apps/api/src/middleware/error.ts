@@ -32,3 +32,4 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   const message = process.env.NODE_ENV === 'production' ? 'An unexpected server error occurred' : err.message;
   return errorResponse(res, message, 500, 'INTERNAL_SERVER_ERROR');
 };
+

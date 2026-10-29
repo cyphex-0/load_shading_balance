@@ -28,3 +28,4 @@ export const checkDatabaseConnection = async (): Promise<boolean> => {
     return false;
   }
 };
+
