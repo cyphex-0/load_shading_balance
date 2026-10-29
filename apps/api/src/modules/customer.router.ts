@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { linkMeterSchema, reportOutageSchema, UserRole } from '@load-shedding/shared';
 import { store, CustomerMeterRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError } from '../utils/response';
+import { successResponse, AppError, NotFoundError } from '../utils/response';
 import { conflictResolutionService } from '../services/conflict.service';
 import { cacheService } from '../services/cache.service';
 
@@ -239,7 +239,7 @@ customerRouter.patch('/v1/customers/me/location', custAuth, handleLinkMeter);
 customerRouter.delete('/customers/me/meters/:id', custAuth, (req: any, res) => {
   const link = store.customerMeters.get(req.params.id);
   if (!link || link.customerId !== req.user.sub || link.unlinkedAt) {
-    throw new AppError('Meter link not found', 404, 'LINK_NOT_FOUND');
+    throw new NotFoundError('Meter link not found', 'LINK_NOT_FOUND');
   }
 
   link.unlinkedAt = new Date().toISOString();
@@ -285,7 +285,7 @@ customerRouter.get('/customers/me/outage-reports', custAuth, (req: any, res) => 
 customerRouter.get('/customers/me/outage-reports/:id', custAuth, (req: any, res) => {
   const ticket = store.outageTickets.get(req.params.id);
   if (!ticket || ticket.customerId !== req.user.sub) {
-    throw new AppError('Outage ticket not found', 404, 'TICKET_NOT_FOUND');
+    throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
   }
 
   const feeder = store.feeders.get(ticket.feederId);

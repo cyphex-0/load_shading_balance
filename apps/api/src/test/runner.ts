@@ -10,8 +10,10 @@ import {
   NotFoundError,
   ConflictError,
   ValidationError,
-  BadRequestError
+  BadRequestError,
+  ForbiddenError
 } from '../utils/response';
+import { requireRole, verifyZoneScope } from '../middleware/auth';
 
 // Helper to make test HTTP requests
 const request = async (
@@ -514,6 +516,217 @@ const runSuite = async () => {
     // 14j. Logout Endpoint
     const logoutRes = await request(serverUrl, 'POST', '/api/v1/auth/logout', undefined, zarinToken);
     assert(logoutRes.status === 200 && logoutRes.body.success === true, 'POST /api/v1/auth/logout clears session');
+
+    // Test 15: RBAC, Resource Ownership, and Horizontal Zone-Scope Authorization (Phase 8)
+    // 15a. Vertical RBAC: Customer blocked from Operator draft schedule
+    const customerDraftRes = await request(
+      serverUrl,
+      'POST',
+      '/api/operator/schedules/draft',
+      {
+        planningDate: '2026-09-25',
+        deficitMW: 20,
+        startTime: '14:00',
+        endTime: '18:00',
+        slotDurationMinutes: 60
+      },
+      customerToken
+    );
+    assert(
+      customerDraftRes.status === 403 && customerDraftRes.body.error.code === 'FORBIDDEN',
+      'Vertical RBAC: Customer blocked from Operator draft schedule (403 FORBIDDEN)'
+    );
+
+    // 15b. Vertical RBAC: Field Technician blocked from Admin zone creation
+    const techLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'tech1@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const tech1Token = techLogin.body.data.token;
+
+    const techAdminRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/zones',
+      { name: 'Unauthorized Tech Zone', code: 'TECH-ZONE' },
+      tech1Token
+    );
+    assert(
+      techAdminRes.status === 403 && techAdminRes.body.error.code === 'FORBIDDEN',
+      'Vertical RBAC: Technician blocked from Admin zone creation (403 FORBIDDEN)'
+    );
+
+    // 15c. Vertical RBAC: Zone Manager blocked from Admin user provisioning
+    const managerLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'manager.dhanmondi@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const managerToken = managerLogin.body.data.token;
+
+    const mgrProvisionRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/users',
+      {
+        name: 'Unauthorized Staff',
+        email: 'unauth.staff@grid.gov.bd',
+        password: 'Password123!',
+        role: UserRole.TECHNICIAN
+      },
+      managerToken
+    );
+    assert(
+      mgrProvisionRes.status === 403 && mgrProvisionRes.body.error.code === 'FORBIDDEN',
+      'Vertical RBAC: Zone Manager blocked from Admin user provisioning (403 FORBIDDEN)'
+    );
+
+    // 15d. Horizontal Zone Scope: Dhanmondi Zone Manager blocked from requesting upgrade on Mirpur feeder
+    const crossZoneUpgradeRes = await request(
+      serverUrl,
+      'POST',
+      '/api/infrastructure-requests',
+      {
+        feederId: 'fdr_mir_1', // Mirpur feeder
+        reason: 'Attempted cross-zone upgrade',
+        proposedAction: 'Upgrade line capacity to 30MW',
+        supportingMetrics: { peakLoadMW: 25.0 }
+      },
+      managerToken
+    );
+    assert(
+      crossZoneUpgradeRes.status === 403 && crossZoneUpgradeRes.body.error.code === 'ZONE_ACCESS_DENIED',
+      'Horizontal Zone Scope: Dhanmondi Zone Manager blocked from Mirpur feeder upgrade (403 ZONE_ACCESS_DENIED)'
+    );
+
+    // 15e. Horizontal Zone Scope: Dhanmondi Zone Manager successfully requests upgrade on Dhanmondi feeder
+    const inZoneUpgradeRes = await request(
+      serverUrl,
+      'POST',
+      '/api/infrastructure-requests',
+      {
+        feederId: 'fdr_dhn_1', // Dhanmondi feeder
+        reason: 'Authorized in-zone upgrade',
+        proposedAction: 'Re-conductoring line with higher gauge',
+        supportingMetrics: { peakLoadMW: 12.0 }
+      },
+      managerToken
+    );
+    assert(
+      inZoneUpgradeRes.status === 201 &&
+      inZoneUpgradeRes.body.success === true &&
+      inZoneUpgradeRes.body.data.feederId === 'fdr_dhn_1',
+      'Horizontal Zone Scope: Dhanmondi Zone Manager successfully requests Dhanmondi feeder upgrade (201 CREATED)'
+    );
+
+    // 15f. IDOR Protection: Customer B blocked from unlinking Customer A's meter
+    const customerBToken = newPassLogin.body.data.token;
+    const idorUnlinkRes = await request(
+      serverUrl,
+      'DELETE',
+      '/api/customers/me/meters/cm_1', // cm_1 belongs to Customer A (usr_cust_1)
+      undefined,
+      customerBToken
+    );
+    assert(
+      idorUnlinkRes.status === 404 && idorUnlinkRes.body.error.code === 'LINK_NOT_FOUND',
+      'IDOR Protection: Customer B blocked from unlinking Customer A meter (404 LINK_NOT_FOUND)'
+    );
+
+    // 15g. IDOR Protection: Customer B blocked from inspecting Customer A's private outage report
+    const tktTestId = `tkt_test_15_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+    store.outageTickets.set(tktTestId, {
+      id: tktTestId,
+      ticketNumber: 'TKT-2026-TEST15',
+      customerId: 'usr_cust_1',
+      meterId: 'mtr_dhn_101',
+      feederId: 'fdr_dhn_1',
+      status: 'ASSIGNED' as any,
+      description: 'Private customer report',
+      isPlanned: false,
+      reportedAt: nowIso,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+    const asgnTestId = `asgn_test_15_${Date.now()}`;
+    store.technicianAssignments.set(asgnTestId, {
+      id: asgnTestId,
+      ticketId: tktTestId,
+      technicianId: 'usr_tech_1',
+      assignedById: 'usr_admin_1',
+      status: 'PENDING' as any,
+      assignedAt: new Date().toISOString()
+    });
+
+    const idorTicketInspectRes = await request(
+      serverUrl,
+      'GET',
+      `/api/customers/me/outage-reports/${tktTestId}`,
+      undefined,
+      customerBToken
+    );
+    assert(
+      idorTicketInspectRes.status === 404 && idorTicketInspectRes.body.error.code === 'TICKET_NOT_FOUND',
+      'IDOR Protection: Customer B blocked from inspecting Customer A ticket (404 TICKET_NOT_FOUND)'
+    );
+
+    // 15h. IDOR Protection: Technician 2 blocked from accepting ticket assigned to Technician 1
+    const tech2ProvisionRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/users',
+      {
+        name: 'Field Technician Monir',
+        email: 'tech2@grid.gov.bd',
+        password: 'Password123!',
+        phone: '+8801700000005',
+        role: UserRole.TECHNICIAN,
+        assignedZoneId: 'zone_mirpur'
+      },
+      adminToken
+    );
+    assert(tech2ProvisionRes.status === 201, 'Admin successfully provisions Technician 2');
+
+    const tech2Login = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'tech2@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const tech2Token = tech2Login.body.data.token;
+
+    const tech2AcceptRes = await request(
+      serverUrl,
+      'POST',
+      `/api/technicians/me/assignments/${tktTestId}/accept`,
+      undefined,
+      tech2Token
+    );
+    assert(
+      tech2AcceptRes.status === 403 && tech2AcceptRes.body.error.code === 'NOT_ASSIGNED_TECHNICIAN',
+      'IDOR Protection: Technician 2 blocked from accepting Technician 1 assignment (403 NOT_ASSIGNED_TECHNICIAN)'
+    );
+
+    // 15i. Middleware Aliases & Scope Guards: Direct invocation tests
+    let requireRoleFailedAsExpected = false;
+    const mockReqCust: any = { user: { role: UserRole.CUSTOMER } };
+    const mockRes: any = {};
+    requireRole(UserRole.ADMIN)(mockReqCust, mockRes, (err?: any) => {
+      if (err instanceof ForbiddenError && err.code === 'FORBIDDEN') {
+        requireRoleFailedAsExpected = true;
+      }
+    });
+    assert(requireRoleFailedAsExpected, 'Middleware: requireRole blocks unprivileged role with ForbiddenError');
+
+    let zoneScopeFailedAsExpected = false;
+    const mockReqZoneMgr: any = {
+      user: { role: UserRole.ZONE_MANAGER, zoneId: 'zone_dhanmondi' },
+      params: { zoneId: 'zone_mirpur' }
+    };
+    verifyZoneScope()(mockReqZoneMgr, mockRes, (err?: any) => {
+      if (err instanceof ForbiddenError && err.code === 'ZONE_ACCESS_DENIED') {
+        zoneScopeFailedAsExpected = true;
+      }
+    });
+    assert(zoneScopeFailedAsExpected, 'Middleware: verifyZoneScope blocks cross-zone request with ZONE_ACCESS_DENIED');
 
   } catch (err: any) {
     logger.error('Test execution error:', err);

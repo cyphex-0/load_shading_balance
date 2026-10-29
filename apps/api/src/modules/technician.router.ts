@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { resolveTicketSchema, UserRole, OutageStatus, AssignmentStatus, FeederStatus, NotificationType } from '@load-shedding/shared';
 import { store, OutageAttachmentRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, AppError } from '../utils/response';
+import { successResponse, AppError, ForbiddenError, NotFoundError } from '../utils/response';
 import { uploadRepairPhoto } from '../middleware/upload';
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from '../services/notification.service';
@@ -59,13 +59,13 @@ technicianRouter.get('/technicians/me/assignments', techAuth, (req: any, res) =>
 // Endpoint 39: POST /api/technicians/me/assignments/:id/accept (ASSIGNED -> EN_ROUTE)
 technicianRouter.post('/technicians/me/assignments/:id/accept', techAuth, (req: any, res) => {
   const ticket = store.outageTickets.get(req.params.id);
-  if (!ticket) throw new AppError('Ticket not found', 404, 'TICKET_NOT_FOUND');
+  if (!ticket) throw new NotFoundError('Ticket not found', 'TICKET_NOT_FOUND');
 
   const assignment = Array.from(store.technicianAssignments.values()).find(
     (a) => a.ticketId === ticket.id && (a.technicianId === req.user.sub || req.user.role === UserRole.ADMIN)
   );
   if (!assignment) {
-    throw new AppError('Ticket not assigned to you', 403, 'NOT_ASSIGNED_TECHNICIAN');
+    throw new ForbiddenError('Ticket not assigned to you', 'NOT_ASSIGNED_TECHNICIAN');
   }
 
   const now = new Date().toISOString();
@@ -99,13 +99,13 @@ technicianRouter.post('/technicians/me/assignments/:id/accept', techAuth, (req: 
 // Endpoint 40: POST /api/technicians/me/assignments/:id/start-repair (EN_ROUTE -> REPAIRING)
 technicianRouter.post('/technicians/me/assignments/:id/start-repair', techAuth, (req: any, res) => {
   const ticket = store.outageTickets.get(req.params.id);
-  if (!ticket) throw new AppError('Ticket not found', 404, 'TICKET_NOT_FOUND');
+  if (!ticket) throw new NotFoundError('Ticket not found', 'TICKET_NOT_FOUND');
 
   const assignment = Array.from(store.technicianAssignments.values()).find(
     (a) => a.ticketId === ticket.id && (a.technicianId === req.user.sub || req.user.role === UserRole.ADMIN)
   );
   if (!assignment) {
-    throw new AppError('Ticket not assigned to you', 403, 'NOT_ASSIGNED_TECHNICIAN');
+    throw new ForbiddenError('Ticket not assigned to you', 'NOT_ASSIGNED_TECHNICIAN');
   }
 
   const now = new Date().toISOString();
@@ -142,13 +142,13 @@ technicianRouter.post('/technicians/me/assignments/:id/resolve', techAuth, async
     const { resolutionNotes, attachmentId } = resolveTicketSchema.parse(req.body);
 
     const ticket = store.outageTickets.get(req.params.id);
-    if (!ticket) throw new AppError('Ticket not found', 404, 'TICKET_NOT_FOUND');
+    if (!ticket) throw new NotFoundError('Ticket not found', 'TICKET_NOT_FOUND');
 
     const assignment = Array.from(store.technicianAssignments.values()).find(
       (a) => a.ticketId === ticket.id && (a.technicianId === req.user.sub || req.user.role === UserRole.ADMIN)
     );
     if (!assignment) {
-      throw new AppError('Ticket not assigned to you', 403, 'NOT_ASSIGNED_TECHNICIAN');
+      throw new ForbiddenError('Ticket not assigned to you', 'NOT_ASSIGNED_TECHNICIAN');
     }
 
     const now = new Date().toISOString();
