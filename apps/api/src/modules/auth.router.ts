@@ -36,6 +36,26 @@ authRouter.post('/auth/register', validateBody(registerSchema), async (req, res)
     throw new ConflictError('An account with this email already exists', 'EMAIL_EXISTS');
   }
 
+  // Verify optional meter upfront before creating user
+  let targetMeter: any = null;
+  if (data.meterNumber) {
+    const meter = Array.from(store.meters.values()).find(
+      (m) => m.meterNumber.toLowerCase() === data.meterNumber?.toLowerCase() && !m.deletedAt
+    );
+    if (!meter) {
+      throw new NotFoundError('Meter number not found in grid inventory', 'METER_NOT_FOUND');
+    }
+
+    const existingBinding = Array.from(store.customerMeters.values()).find(
+      (cm) => cm.meterId === meter.id && !cm.unlinkedAt
+    );
+    if (existingBinding) {
+      throw new ConflictError('Meter is already registered to another account', 'METER_ALREADY_LINKED');
+    }
+
+    targetMeter = meter;
+  }
+
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(data.password, salt);
   const now = new Date().toISOString();
@@ -57,22 +77,17 @@ authRouter.post('/auth/register', validateBody(registerSchema), async (req, res)
 
   store.users.set(userId, newUser);
 
-  // Link optional initial meter
-  if (data.meterNumber) {
-    const meter = Array.from(store.meters.values()).find(
-      (m) => m.meterNumber.toLowerCase() === data.meterNumber?.toLowerCase() && !m.deletedAt
-    );
-    if (meter) {
-      const linkId = `cm_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-      store.customerMeters.set(linkId, {
-        id: linkId,
-        customerId: userId,
-        meterId: meter.id,
-        isPrimary: true,
-        nickname: 'Primary Meter',
-        linkedAt: now
-      });
-    }
+  // Link validated initial meter
+  if (targetMeter) {
+    const linkId = `cm_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    store.customerMeters.set(linkId, {
+      id: linkId,
+      customerId: userId,
+      meterId: targetMeter.id,
+      isPrimary: true,
+      nickname: 'Primary Meter',
+      linkedAt: now
+    });
   }
 
   return successResponse(
