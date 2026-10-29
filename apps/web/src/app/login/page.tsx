@@ -13,8 +13,7 @@ import {
   Users,
   Activity,
   Wrench,
-  BarChart2,
-  CheckCircle2
+  BarChart2
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { ApiClient } from '../../lib/api';
@@ -77,10 +76,10 @@ function LoginForm() {
     <div className="max-w-md mx-auto py-8 sm:py-12 space-y-6">
       {/* Brand Header */}
       <div className="text-center space-y-2">
-        <div className="inline-flex h-12 w-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 items-center justify-center mb-1 text-slate-950 shadow-sm">
+        <div className="inline-flex h-12 w-12 rounded-xl bg-amber-500 items-center justify-center mb-1 text-slate-950 font-bold shadow-sm">
           <Zap className="h-6 w-6 fill-current" />
         </div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
           Sign In to GridSync BD
         </h1>
         <p className="text-xs text-slate-500">
@@ -89,17 +88,17 @@ function LoginForm() {
       </div>
 
       {/* Main Authentication Card */}
-      <div className="glass-panel p-6 sm:p-8 rounded-3xl shadow-sm space-y-6 border border-slate-200/80 dark:border-slate-800/80">
+      <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-sm space-y-6 border border-slate-200">
         {error && (
-          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-700 dark:text-rose-400 text-xs flex items-center gap-2.5">
-            <AlertCircle className="h-4 w-4 shrink-0" />
+          <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center gap-2.5">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
             <span>{error}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+            <label className="text-xs font-semibold text-slate-700">
               Email Address
             </label>
             <div className="relative">
@@ -110,14 +109,14 @@ function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@grid.gov.bd"
-                className="w-full text-xs pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/70 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+                className="w-full text-xs pl-10 pr-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 font-medium"
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              <label className="text-xs font-semibold text-slate-700">
                 Password
               </label>
               <span className="text-[11px] font-mono text-slate-400">
@@ -131,7 +130,7 @@ function LoginForm() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full text-xs pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/70 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium"
+                className="w-full text-xs pl-10 pr-3.5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 font-medium"
               />
             </div>
           </div>
@@ -139,7 +138,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 px-4 rounded-xl font-bold text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-50"
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-lg font-bold text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors shadow-sm flex items-center justify-center gap-2 mt-2 disabled:opacity-50"
           >
             {loading ? (
               <div className="h-4 w-4 border-2 border-slate-950 border-r-transparent rounded-full animate-spin" />
@@ -153,7 +152,7 @@ function LoginForm() {
         </form>
 
         {/* 1-Click Role Switcher Demo Deck */}
-        <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="pt-4 border-t border-slate-200 space-y-2.5">
           <span className="text-[11px] font-mono font-semibold text-slate-500 uppercase tracking-wider block text-center">
             Instant 1-Click Role Switcher
           </span>
@@ -162,89 +161,91 @@ function LoginForm() {
             <button
               type="button"
               onClick={() => handleQuickLogin('customer@gmail.com')}
-              className={`p-2.5 rounded-xl border text-left transition-all text-xs flex items-center gap-2 ${
+              className={`p-2.5 rounded-lg border text-left transition-colors text-xs flex items-center gap-2 ${
                 email === 'customer@gmail.com'
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400 font-bold'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-300'
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-bold'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <Users className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+              <Users className="h-4 w-4 text-emerald-700 shrink-0" />
               <div className="truncate">
-                <span className="block leading-tight">Customer</span>
-                <span className="text-[10px] text-slate-400 truncate font-mono">customer@gmail.com</span>
+                <span className="block leading-tight font-semibold">Customer</span>
+                <span className="text-[10px] text-slate-500 truncate font-mono">customer@gmail.com</span>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => handleQuickLogin('operator@grid.gov.bd')}
-              className={`p-2.5 rounded-xl border text-left transition-all text-xs flex items-center gap-2 ${
+              className={`p-2.5 rounded-lg border text-left transition-colors text-xs flex items-center gap-2 ${
                 email === 'operator@grid.gov.bd'
-                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400 font-bold'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-300'
+                  ? 'bg-blue-50 border-blue-300 text-blue-900 font-bold'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <Activity className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+              <Activity className="h-4 w-4 text-blue-700 shrink-0" />
               <div className="truncate">
-                <span className="block leading-tight">Power Operator</span>
-                <span className="text-[10px] text-slate-400 truncate font-mono">operator@grid.gov.bd</span>
+                <span className="block leading-tight font-semibold">Power Operator</span>
+                <span className="text-[10px] text-slate-500 truncate font-mono">operator@grid.gov.bd</span>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => handleQuickLogin('tech1@grid.gov.bd')}
-              className={`p-2.5 rounded-xl border text-left transition-all text-xs flex items-center gap-2 ${
+              className={`p-2.5 rounded-lg border text-left transition-colors text-xs flex items-center gap-2 ${
                 email === 'tech1@grid.gov.bd'
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400 font-bold'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-300'
+                  ? 'bg-amber-50 border-amber-300 text-amber-900 font-bold'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <Wrench className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <Wrench className="h-4 w-4 text-amber-700 shrink-0" />
               <div className="truncate">
-                <span className="block leading-tight">Field Technician</span>
-                <span className="text-[10px] text-slate-400 truncate font-mono">tech1@grid.gov.bd</span>
+                <span className="block leading-tight font-semibold">Field Technician</span>
+                <span className="text-[10px] text-slate-500 truncate font-mono">tech1@grid.gov.bd</span>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => handleQuickLogin('manager.dhanmondi@grid.gov.bd')}
-              className={`p-2.5 rounded-xl border text-left transition-all text-xs flex items-center gap-2 ${
+              className={`p-2.5 rounded-lg border text-left transition-colors text-xs flex items-center gap-2 ${
                 email === 'manager.dhanmondi@grid.gov.bd'
-                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-400 font-bold'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-300'
+                  ? 'bg-cyan-50 border-cyan-300 text-cyan-900 font-bold'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
-              <BarChart2 className="h-3.5 w-3.5 text-cyan-500 shrink-0" />
+              <BarChart2 className="h-4 w-4 text-cyan-700 shrink-0" />
               <div className="truncate">
-                <span className="block leading-tight">Zone Manager</span>
-                <span className="text-[10px] text-slate-400 truncate font-mono">manager.dhanmondi</span>
+                <span className="block leading-tight font-semibold">Zone Manager</span>
+                <span className="text-[10px] text-slate-500 truncate font-mono">manager.dhanmondi</span>
               </div>
             </button>
 
             <button
               type="button"
               onClick={() => handleQuickLogin('admin@grid.gov.bd')}
-              className={`col-span-full p-2.5 rounded-xl border text-left transition-all text-xs flex items-center justify-between ${
+              className={`col-span-full p-2.5 rounded-lg border text-left transition-colors text-xs flex items-center justify-between ${
                 email === 'admin@grid.gov.bd'
-                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-700 dark:text-purple-400 font-bold'
-                  : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-600 dark:text-slate-300'
+                  ? 'bg-purple-50 border-purple-300 text-purple-900 font-bold'
+                  : 'border-slate-200 hover:bg-slate-50 text-slate-700'
               }`}
             >
               <div className="flex items-center gap-2">
-                <Shield className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                <span>System Administrator (admin@grid.gov.bd)</span>
+                <Shield className="h-4 w-4 text-purple-700 shrink-0" />
+                <span className="font-semibold">System Administrator (admin@grid.gov.bd)</span>
               </div>
-              <span className="text-[10px] font-mono text-purple-600">FULL ACCESS</span>
+              <span className="text-[10px] font-mono font-bold text-purple-800 bg-purple-100 px-2 py-0.5 rounded">
+                FULL ACCESS
+              </span>
             </button>
           </div>
         </div>
       </div>
 
-      <div className="text-center text-xs text-slate-500">
+      <div className="text-center text-xs text-slate-600">
         Don&apos;t have a customer meter account yet?{' '}
-        <Link href="/register" className="font-bold text-amber-600 dark:text-amber-400 hover:underline">
+        <Link href="/register" className="font-bold text-amber-700 hover:underline">
           Register New Meter
         </Link>
       </div>

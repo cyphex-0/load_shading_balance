@@ -13,7 +13,6 @@ import {
   BarChart2,
   Calendar,
   Info,
-  Radio,
   Menu,
   X
 } from 'lucide-react';
@@ -64,45 +63,45 @@ export const Navbar = () => {
   const getRoleBadgeStyle = (role: UserRole) => {
     switch (role) {
       case UserRole.ADMIN:
-        return 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/30';
+        return 'bg-purple-50 text-purple-800 border-purple-200';
       case UserRole.POWER_OPERATOR:
-        return 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30';
+        return 'bg-blue-50 text-blue-800 border-blue-200';
       case UserRole.TECHNICIAN:
-        return 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30';
+        return 'bg-amber-50 text-amber-800 border-amber-200';
       case UserRole.ZONE_MANAGER:
-        return 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border-cyan-500/30';
+        return 'bg-cyan-50 text-cyan-800 border-cyan-200';
       default:
-        return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30';
+        return 'bg-emerald-50 text-emerald-800 border-emerald-200';
     }
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand with Grid Telemetry Indicator */}
         <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 flex items-center justify-center text-slate-950 shadow-sm group-hover:scale-105 transition-transform duration-200">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-lg bg-amber-500 flex items-center justify-center text-slate-950 font-bold">
               <Zap className="h-5 w-5 fill-current" />
             </div>
             <div className="flex flex-col">
-              <span className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5 leading-none">
+              <span className="font-extrabold text-base tracking-tight text-slate-900 flex items-center gap-1.5 leading-none">
                 GridSync
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
                   BD-DISPATCH
                 </span>
               </span>
-              <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 leading-tight">
+              <span className="text-[10px] font-medium text-slate-500 leading-tight">
                 National Outage Management
               </span>
             </div>
           </Link>
 
           {/* Real-time Socket Connection Status Pill */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500">
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium bg-slate-100 border border-slate-200 text-slate-700">
             <span
               className={`h-2 w-2 rounded-full ${
-                socketConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                socketConnected ? 'bg-emerald-600' : 'bg-amber-500'
               }`}
             />
             <span>{socketConnected ? 'TELEMETRY LIVE' : 'CONNECTING...'}</span>
@@ -113,34 +112,34 @@ export const Navbar = () => {
         <nav className="hidden md:flex items-center gap-1.5">
           <Link
             href="/"
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 ${
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors ${
               pathname === '/'
-                ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900'
+                ? 'text-amber-900 bg-amber-50 border border-amber-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             Live Grid
           </Link>
           <Link
             href="/schedules"
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
               pathname === '/schedules'
-                ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900'
+                ? 'text-amber-900 bg-amber-50 border border-amber-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <Calendar className="h-3.5 w-3.5" />
+            <Calendar className="h-3.5 w-3.5 text-slate-500" />
             Schedules
           </Link>
           <Link
             href="/about"
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-150 flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
               pathname === '/about'
-                ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-900'
+                ? 'text-amber-900 bg-amber-50 border border-amber-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <Info className="h-3.5 w-3.5" />
+            <Info className="h-3.5 w-3.5 text-slate-500" />
             Architecture
           </Link>
 
@@ -148,14 +147,14 @@ export const Navbar = () => {
           {user && (
             <Link
               href={getDashboardLink()}
-              className={`ml-2 px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all duration-150 flex items-center gap-1.5 ${
+              className={`ml-2 px-3.5 py-2 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 ${
                 pathname.startsWith('/customer') ||
                 pathname.startsWith('/operator') ||
                 pathname.startsWith('/technician') ||
                 pathname.startsWith('/manager') ||
                 pathname.startsWith('/admin')
-                  ? 'text-white bg-slate-950 dark:bg-amber-500 dark:text-slate-950 shadow-sm'
-                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200'
+                  ? 'text-white bg-slate-900'
+                  : 'text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200'
               }`}
             >
               {user.role === UserRole.ADMIN && <Shield className="h-3.5 w-3.5" />}
@@ -173,25 +172,25 @@ export const Navbar = () => {
           {user ? (
             <div className="flex items-center gap-2 sm:gap-3">
               <span
-                className={`text-[10px] font-mono uppercase px-2.5 py-1 rounded-full border ${getRoleBadgeStyle(
+                className={`text-[10px] font-mono font-bold uppercase px-2.5 py-1 rounded-full border ${getRoleBadgeStyle(
                   user.role
                 )}`}
               >
-                {user.role.replace('_', ' ')}
+                {user.role.replace(/_/g, ' ')}
               </span>
 
               <div className="hidden sm:flex flex-col text-right">
-                <span className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                <span className="text-xs font-bold text-slate-900 leading-tight">
                   {user.name}
                 </span>
-                <span className="text-[10px] font-mono text-slate-400 leading-tight">
+                <span className="text-[10px] font-mono text-slate-500 leading-tight">
                   {user.email}
                 </span>
               </div>
 
               <button
                 onClick={() => logout()}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                className="h-9 w-9 rounded-lg flex items-center justify-center text-slate-500 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors"
                 title="Sign Out"
                 aria-label="Sign Out"
               >
@@ -202,13 +201,13 @@ export const Navbar = () => {
             <div className="flex items-center gap-2">
               <Link
                 href="/login"
-                className="px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white transition-colors"
+                className="px-3.5 py-2 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors"
               >
                 Sign In
               </Link>
               <Link
                 href="/register"
-                className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-xl shadow-sm transition-all"
+                className="px-4 py-2 text-xs font-bold text-slate-950 bg-amber-500 hover:bg-amber-400 rounded-lg shadow-sm transition-colors"
               >
                 Register
               </Link>
@@ -218,7 +217,7 @@ export const Navbar = () => {
           {/* Mobile Menu Toggle Button */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="md:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100 border border-slate-200"
             aria-label="Toggle navigation menu"
           >
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -228,25 +227,25 @@ export const Navbar = () => {
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-4 space-y-2">
+        <div className="md:hidden border-t border-slate-200 bg-white px-4 py-4 space-y-2">
           <Link
             href="/"
             onClick={() => setMobileMenuOpen(false)}
-            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 hover:bg-slate-100"
           >
             Live Grid
           </Link>
           <Link
             href="/schedules"
             onClick={() => setMobileMenuOpen(false)}
-            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 hover:bg-slate-100"
           >
             Public Schedules
           </Link>
           <Link
             href="/about"
             onClick={() => setMobileMenuOpen(false)}
-            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="block px-3 py-2 rounded-lg text-sm font-semibold text-slate-800 hover:bg-slate-100"
           >
             Architecture Rules
           </Link>
@@ -254,9 +253,9 @@ export const Navbar = () => {
             <Link
               href={getDashboardLink()}
               onClick={() => setMobileMenuOpen(false)}
-              className="block px-3 py-2 rounded-lg text-sm font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10"
+              className="block px-3 py-2 rounded-lg text-sm font-bold text-amber-900 bg-amber-50 border border-amber-200"
             >
-              Go to Operational Portal ({user.role.replace('_', ' ')})
+              Go to Operational Portal ({user.role.replace(/_/g, ' ')})
             </Link>
           )}
         </div>
