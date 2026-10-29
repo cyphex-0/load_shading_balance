@@ -25,7 +25,15 @@ import {
   AuditLogRecord
 } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
-import { successResponse, paginatedResponse, AppError, NotFoundError } from '../utils/response';
+import {
+  successResponse,
+  paginatedResponse,
+  AppError,
+  NotFoundError,
+  BadRequestError,
+  ConflictError
+} from '../utils/response';
+import { toSafeUser } from '../db/helpers';
 
 export const adminRouter = Router();
 
@@ -408,7 +416,18 @@ adminRouter.post('/admin/users', (req: any, res, next) => {
     const existing = Array.from(store.users.values()).find(
       (u) => u.email.toLowerCase() === data.email.toLowerCase() && !u.deletedAt
     );
-    if (existing) throw new AppError('Email already registered', 409, 'EMAIL_EXISTS');
+    if (existing) throw new ConflictError('Email already registered', 'EMAIL_EXISTS');
+
+    if (data.role === UserRole.ZONE_MANAGER && !data.assignedZoneId) {
+      throw new BadRequestError('Zone Manager must have an assigned zone', 'ZONE_REQUIRED');
+    }
+
+    if (data.assignedZoneId) {
+      const zone = store.zones.get(data.assignedZoneId);
+      if (!zone || zone.deletedAt) {
+        throw new NotFoundError('Assigned zone not found', 'ZONE_NOT_FOUND');
+      }
+    }
 
     const salt = bcrypt.genSaltSync(10);
     const passwordHash = bcrypt.hashSync(data.password, salt);
@@ -431,17 +450,7 @@ adminRouter.post('/admin/users', (req: any, res, next) => {
     store.users.set(id, user);
     logAudit(req.user.sub, 'PROVISION_USER', 'User', id, { role: data.role, email: data.email });
 
-    return successResponse(
-      res,
-      {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        assignedZoneId: user.assignedZoneId
-      },
-      201
-    );
+    return successResponse(res, toSafeUser(user), 201);
   } catch (err) {
     next(err);
   }
@@ -459,16 +468,13 @@ adminRouter.get('/admin/users', (req, res) => {
   if (status) users = users.filter((u) => u.status === status);
   if (zoneId) users = users.filter((u) => u.assignedZoneId === zoneId);
 
-  const clean = users.map((u) => ({
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    phone: u.phone,
-    role: u.role,
-    status: u.status,
-    assignedZoneId: u.assignedZoneId,
-    createdAt: u.createdAt
-  }));
+  const clean = users.map((u) => {
+    const zone = u.assignedZoneId ? store.zones.get(u.assignedZoneId) : null;
+    return {
+      ...toSafeUser(u),
+      zone: zone && !zone.deletedAt ? { id: zone.id, name: zone.name, code: zone.code } : null
+    };
+  });
 
   if (req.query.page || req.query.pageSize) {
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
@@ -483,19 +489,12 @@ adminRouter.get('/admin/users', (req, res) => {
 // Endpoint 74: GET /api/admin/users/:id
 adminRouter.get('/admin/users/:id', (req, res) => {
   const u = store.users.get(req.params.id);
-  if (!u || u.deletedAt) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+  if (!u || u.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
 
+  const zone = u.assignedZoneId ? store.zones.get(u.assignedZoneId) : null;
   return successResponse(res, {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    phone: u.phone,
-    role: u.role,
-    status: u.status,
-    assignedZoneId: u.assignedZoneId,
-    emailVerified: u.emailVerified,
-    createdAt: u.createdAt,
-    updatedAt: u.updatedAt
+    ...toSafeUser(u),
+    zone: zone && !zone.deletedAt ? { id: zone.id, name: zone.name, code: zone.code } : null
   });
 });
 
@@ -504,7 +503,14 @@ adminRouter.patch('/admin/users/:id', (req: any, res, next) => {
   try {
     const data = updateUserAdminSchema.parse(req.body);
     const user = store.users.get(req.params.id);
-    if (!user || user.deletedAt) throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+    if (!user || user.deletedAt) throw new NotFoundError('User not found', 'USER_NOT_FOUND');
+
+    if (data.assignedZoneId) {
+      const zone = store.zones.get(data.assignedZoneId);
+      if (!zone || zone.deletedAt) {
+        throw new NotFoundError('Assigned zone not found', 'ZONE_NOT_FOUND');
+      }
+    }
 
     if (data.name) user.name = data.name;
     if (data.phone !== undefined) user.phone = data.phone;
@@ -514,7 +520,7 @@ adminRouter.patch('/admin/users/:id', (req: any, res, next) => {
     user.updatedAt = new Date().toISOString();
 
     logAudit(req.user.sub, 'UPDATE_USER', 'User', user.id, data);
-    return successResponse(res, user);
+    return successResponse(res, toSafeUser(user));
   } catch (err) {
     next(err);
   }

@@ -681,7 +681,7 @@ const runSuite = async () => {
         password: 'Password123!',
         phone: '+8801700000005',
         role: UserRole.TECHNICIAN,
-        assignedZoneId: 'zone_mirpur'
+        assignedZoneId: 'zn_mirpur'
       },
       adminToken
     );
