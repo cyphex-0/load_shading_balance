@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus } from './enums';
+import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus, DeliveryStatus } from './enums';
 
 // Auth validators
 export const registerSchema = z.object({
@@ -301,3 +301,23 @@ export const customerScheduleQuerySchema = paginationQuerySchema.extend({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'End date must be YYYY-MM-DD').optional()
 });
 
+
+// ============================================================================
+// Phase 16: Notification Delivery & Twilio Webhook Schemas
+// ============================================================================
+
+export const twilioStatusCallbackSchema = z.object({
+  MessageSid: z.string().optional(),
+  SmsSid: z.string().optional(),
+  MessageStatus: z.string(),
+  To: z.string().optional(),
+  From: z.string().optional(),
+  ErrorCode: z.string().optional(),
+  ErrorMessage: z.string().optional()
+});
+
+export const notificationDeliveryLogQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(DeliveryStatus).optional(),
+  channel: z.string().optional(),
+  phone: z.string().optional()
+});

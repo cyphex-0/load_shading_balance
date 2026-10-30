@@ -60,7 +60,9 @@ export enum NotificationType {
 
 export enum DeliveryStatus {
   QUEUED = 'QUEUED',
+  SENDING = 'SENDING',
   SENT = 'SENT',
+  DELIVERED = 'DELIVERED',
   FAILED = 'FAILED'
 }
 

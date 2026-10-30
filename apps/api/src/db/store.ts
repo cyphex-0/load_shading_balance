@@ -186,6 +186,7 @@ export interface NotificationRecord {
   type: NotificationType;
   isRead: boolean;
   readAt?: string | null;
+  eventKey?: string | null;
   metadata?: Record<string, any> | null;
   createdAt: string;
 }
@@ -197,8 +198,13 @@ export interface NotificationDeliveryLogRecord {
   channel: string;
   status: DeliveryStatus;
   providerResponse?: string | null;
+  providerMessageId?: string | null;
+  idempotencyKey?: string | null;
   attempts: number;
+  nextAttemptAt?: string | null;
   sentAt?: string | null;
+  deliveredAt?: string | null;
+  error?: string | null;
   createdAt: string;
 }
 

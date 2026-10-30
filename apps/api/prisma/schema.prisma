@@ -69,7 +69,9 @@ enum NotificationType {
 
 enum DeliveryStatus {
   QUEUED
+  SENDING
   SENT
+  DELIVERED
   FAILED
 }
 

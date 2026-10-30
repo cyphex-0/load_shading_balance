@@ -254,6 +254,43 @@ export interface NotificationListResponse extends PaginatedData<NotificationDto>
   unreadCount: number;
 }
 
+export interface SmsSendOptions {
+  to: string;
+  body: string;
+  idempotencyKey?: string;
+}
+
+export interface SmsSendResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+  isPermanentError?: boolean;
+}
+
+export interface TwilioStatusCallbackDto {
+  messageSid: string;
+  messageStatus: string;
+  to?: string;
+  from?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface NotificationDeliveryLogDto {
+  id: string;
+  notificationId?: string | null;
+  recipientPhone: string;
+  channel: string;
+  status: DeliveryStatus;
+  providerResponse?: string | null;
+  providerMessageId?: string | null;
+  attempts: number;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  error?: string | null;
+  createdAt: string;
+}
+
 export interface GridMetricsDto {
   totalDemandMW: number;
   availableCapacityMW: number;
