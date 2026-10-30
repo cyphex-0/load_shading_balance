@@ -1,10 +1,22 @@
 import { Router } from 'express';
-import { linkMeterSchema, reportOutageSchema, UserRole } from '@load-shedding/shared';
+import {
+  linkMeterSchema,
+  reportOutageSchema,
+  UserRole,
+  customerStatusQuerySchema,
+  customerScheduleQuerySchema,
+  ScheduleStatus,
+  FeederStatus,
+  CustomerMeterStatusDto,
+  CustomerDashboardDto,
+  FeederScheduleSlotDto
+} from '@load-shedding/shared';
 import { store, CustomerMeterRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
 import { successResponse, AppError, NotFoundError, ConflictError, BadRequestError } from '../utils/response';
 import { conflictResolutionService } from '../services/conflict.service';
 import { cacheService } from '../services/cache.service';
+import { gridService } from '../services/grid.service';
 
 export const customerRouter = Router();
 
@@ -33,109 +45,327 @@ const getCustomerPrimaryMeter = (customerId: string) => {
 };
 
 // Endpoint 21: GET /api/customers/me/dashboard
-customerRouter.get('/customers/me/dashboard', custAuth, (req: any, res) => {
-  const context = getCustomerPrimaryMeter(req.user.sub);
+customerRouter.get('/customers/me/dashboard', custAuth, async (req: any, res, next) => {
+  try {
+    const cacheKey = cacheService.getCustomerDashboardKey(req.user.sub);
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return successResponse(res, { ...cached, cached: true });
+    }
 
-  const activeReports = Array.from(store.outageTickets.values())
-    .filter((t) => t.customerId === req.user.sub && t.status !== 'RESOLVED' && t.status !== 'CANCELLED')
-    .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime());
+    const links = Array.from(store.customerMeters.values()).filter(
+      (cm) => cm.customerId === req.user.sub && !cm.unlinkedAt
+    );
 
-  const recentNotifications = Array.from(store.notifications.values())
-    .filter((n) => n.userId === req.user.sub)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+    const meters: CustomerMeterStatusDto[] = links.map((link) => {
+      const meter = store.meters.get(link.meterId);
+      const feeder = meter ? store.feeders.get(meter.feederId) : null;
+      const substation = feeder ? store.substations.get(feeder.substationId) : null;
+      const zone = substation ? store.zones.get(substation.zoneId) : null;
+      const effective = feeder
+        ? gridService.getEffectiveFeederStatus(feeder.id)
+        : { status: FeederStatus.ONLINE };
 
-  return successResponse(res, {
-    customer: {
-      id: req.user.sub,
-      name: req.user.name,
-      email: req.user.email
-    },
-    primaryMeter: context
-      ? {
-          id: context.meter.id,
-          meterNumber: context.meter.meterNumber,
-          address: context.meter.address,
-          feeder: context.feeder
-            ? {
-                id: context.feeder.id,
-                name: context.feeder.name,
-                code: context.feeder.code,
-                status: context.feeder.status,
-                isCritical: context.feeder.isCritical
-              }
-            : null,
-          substationName: context.substation?.name,
-          zoneName: context.zone?.name
-        }
-      : null,
-    activeOutages: activeReports,
-    recentNotifications
-  });
-});
-
-// Endpoint 22: GET /api/customers/me/status
-customerRouter.get('/customers/me/status', custAuth, (req: any, res) => {
-  const context = getCustomerPrimaryMeter(req.user.sub);
-  if (!context || !context.feeder) {
-    return successResponse(res, {
-      hasMeter: false,
-      status: 'ONLINE',
-      message: 'No active meter linked to your account'
+      return {
+        meterId: meter?.id || link.meterId,
+        meterNumber: meter?.meterNumber || 'Unknown',
+        address: meter?.address || '',
+        isPrimary: link.isPrimary,
+        nickname: link.nickname,
+        feederId: feeder?.id || '',
+        feederName: feeder?.name || 'Unknown',
+        feederCode: feeder?.code || 'UNKNOWN',
+        substationName: substation?.name || 'Unknown',
+        zoneName: zone?.name || 'Unknown',
+        status: effective.status,
+        updatedAt: feeder?.updatedAt || new Date().toISOString()
+      };
     });
-  }
 
-  return successResponse(res, {
-    hasMeter: true,
-    meterNumber: context.meter.meterNumber,
-    feederId: context.feeder.id,
-    feederName: context.feeder.name,
-    status: context.feeder.status, // ONLINE, PLANNED_OUTAGE, UNEXPECTED_FAULT
-    updatedAt: context.feeder.updatedAt
-  });
-});
+    const feederIds = new Set(meters.map((m) => m.feederId).filter(Boolean));
 
-// Endpoint 23: GET /api/customers/me/schedule (and /api/v1/schedules/my)
-const handleGetCustomerSchedule = async (req: any, res: any) => {
-  const context = getCustomerPrimaryMeter(req.user.sub);
-  if (!context || !context.feeder) {
-    return successResponse(res, { schedules: [] });
-  }
-
-  const feederId = context.feeder.id;
-  const today = new Date().toISOString().split('T')[0];
-  const cacheKey = cacheService.getScheduleKey(feederId, today);
-  const cached = await cacheService.get(cacheKey);
-
-  // Collect published schedule slots for this feeder
-  const publishedSlots: any[] = [];
-  for (const sched of store.schedules.values()) {
-    if (sched.status === 'PUBLISHED') {
-      for (const slot of store.scheduleSlots.values()) {
-        if (slot.scheduleId === sched.id) {
-          const isAssigned = Array.from(store.scheduleFeederAssignments.values()).some(
-            (a) => a.slotId === slot.id && a.feederId === feederId
-          );
-          if (isAssigned) {
-            publishedSlots.push({
-              scheduleId: sched.id,
-              planningDate: sched.planningDate,
-              startTime: slot.startTime,
-              endTime: slot.endTime,
-              status: sched.status
-            });
+    // Aggregate upcoming published schedule slots across all linked meters' feeders
+    const upcomingSchedules: FeederScheduleSlotDto[] = [];
+    for (const sched of store.schedules.values()) {
+      if (sched.status === ScheduleStatus.PUBLISHED) {
+        for (const slot of store.scheduleSlots.values()) {
+          if (slot.scheduleId === sched.id) {
+            const assignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+              (a) => a.slotId === slot.id && feederIds.has(a.feederId)
+            );
+            for (const a of assignments) {
+              upcomingSchedules.push({
+                scheduleId: sched.id,
+                planningDate: sched.planningDate,
+                scheduleStatus: sched.status,
+                slotId: slot.id,
+                startTime: slot.startTime,
+                endTime: slot.endTime,
+                targetDeficitMW: slot.targetDeficitMW,
+                actualDeficitMW: slot.actualDeficitMW,
+                feederLoadMW: a.feederLoadMW,
+                isPublished: true
+              });
+            }
           }
         }
       }
     }
-  }
+    upcomingSchedules.sort(
+      (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    );
 
-  return successResponse(res, {
-    meterNumber: context.meter.meterNumber,
-    feederName: context.feeder.name,
-    cached: !!cached,
-    schedules: publishedSlots
-  });
+    const activeReports = Array.from(store.outageTickets.values())
+      .filter((t) => t.customerId === req.user.sub && t.status !== 'RESOLVED' && t.status !== 'CANCELLED')
+      .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime());
+
+    const userNotifications = Array.from(store.notifications.values()).filter(
+      (n) => n.userId === req.user.sub
+    );
+    const unreadCount = userNotifications.filter((n) => !n.isRead).length;
+    const recentNotifications = userNotifications
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 5);
+
+    const context = getCustomerPrimaryMeter(req.user.sub);
+
+    const dashboardPayload = {
+      customer: {
+        id: req.user.sub,
+        name: req.user.name,
+        email: req.user.email
+      },
+      meters,
+      upcomingSchedules,
+      activeOutages: activeReports,
+      notifications: {
+        unreadCount,
+        recent: recentNotifications
+      },
+      // Backward compatibility fields for single-meter consumers
+      primaryMeter: context
+        ? {
+            id: context.meter.id,
+            meterNumber: context.meter.meterNumber,
+            address: context.meter.address,
+            feeder: context.feeder
+              ? {
+                  id: context.feeder.id,
+                  name: context.feeder.name,
+                  code: context.feeder.code,
+                  status: context.feeder.status,
+                  isCritical: context.feeder.isCritical
+                }
+              : null,
+            substationName: context.substation?.name,
+            zoneName: context.zone?.name
+          }
+        : null
+    };
+
+    await cacheService.set(cacheKey, dashboardPayload, 60);
+
+    return successResponse(res, {
+      ...dashboardPayload,
+      cached: false
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Endpoint 22: GET /api/customers/me/status
+customerRouter.get('/customers/me/status', custAuth, (req: any, res, next) => {
+  try {
+    const query = customerStatusQuerySchema.parse(req.query);
+
+    const links = Array.from(store.customerMeters.values()).filter(
+      (cm) => cm.customerId === req.user.sub && !cm.unlinkedAt
+    );
+
+    // If specific meterId requested, enforce customer ownership (IDOR defense)
+    if (query.meterId) {
+      const link = links.find((l) => l.meterId === query.meterId);
+      if (!link) {
+        throw new NotFoundError('Meter not found or not linked to your account', 'METER_NOT_FOUND');
+      }
+
+      const meter = store.meters.get(link.meterId);
+      if (!meter || meter.deletedAt) {
+        throw new NotFoundError('Meter not found in grid inventory', 'METER_NOT_FOUND');
+      }
+
+      const feeder = store.feeders.get(meter.feederId);
+      const substation = feeder ? store.substations.get(feeder.substationId) : null;
+      const zone = substation ? store.zones.get(substation.zoneId) : null;
+      const effective = feeder
+        ? gridService.getEffectiveFeederStatus(feeder.id)
+        : { status: FeederStatus.ONLINE };
+
+      return successResponse(res, {
+        hasMeter: true,
+        meterId: meter.id,
+        meterNumber: meter.meterNumber,
+        address: meter.address,
+        isPrimary: link.isPrimary,
+        nickname: link.nickname,
+        feederId: feeder?.id || '',
+        feederName: feeder?.name || 'Unknown',
+        feederCode: feeder?.code || 'UNKNOWN',
+        substationName: substation?.name || 'Unknown',
+        zoneName: zone?.name || 'Unknown',
+        status: effective.status,
+        updatedAt: feeder?.updatedAt || new Date().toISOString()
+      });
+    }
+
+    // If meterId omitted: return all linked meters
+    if (links.length === 0) {
+      return successResponse(res, {
+        hasMeter: false,
+        status: 'ONLINE',
+        meters: [],
+        message: 'No active meter linked to your account'
+      });
+    }
+
+    const meterStatuses: CustomerMeterStatusDto[] = links.map((link) => {
+      const meter = store.meters.get(link.meterId);
+      const feeder = meter ? store.feeders.get(meter.feederId) : null;
+      const substation = feeder ? store.substations.get(feeder.substationId) : null;
+      const zone = substation ? store.zones.get(substation.zoneId) : null;
+      const effective = feeder
+        ? gridService.getEffectiveFeederStatus(feeder.id)
+        : { status: FeederStatus.ONLINE };
+
+      return {
+        meterId: meter?.id || link.meterId,
+        meterNumber: meter?.meterNumber || 'Unknown',
+        address: meter?.address || '',
+        isPrimary: link.isPrimary,
+        nickname: link.nickname,
+        feederId: feeder?.id || '',
+        feederName: feeder?.name || 'Unknown',
+        feederCode: feeder?.code || 'UNKNOWN',
+        substationName: substation?.name || 'Unknown',
+        zoneName: zone?.name || 'Unknown',
+        status: effective.status,
+        updatedAt: feeder?.updatedAt || new Date().toISOString()
+      };
+    });
+
+    const primary = meterStatuses.find((m) => m.isPrimary) || meterStatuses[0];
+
+    return successResponse(res, {
+      hasMeter: true,
+      meterNumber: primary.meterNumber,
+      feederId: primary.feederId,
+      feederName: primary.feederName,
+      status: primary.status,
+      updatedAt: primary.updatedAt,
+      meters: meterStatuses
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Endpoint 23: GET /api/customers/me/schedule (and /api/v1/schedules/my)
+const handleGetCustomerSchedule = async (req: any, res: any, next: any) => {
+  try {
+    const query = customerScheduleQuerySchema.parse(req.query);
+
+    const links = Array.from(store.customerMeters.values()).filter(
+      (cm) => cm.customerId === req.user.sub && !cm.unlinkedAt
+    );
+
+    let targetFeederIds: string[] = [];
+
+    if (query.meterId) {
+      const link = links.find((l) => l.meterId === query.meterId);
+      if (!link) {
+        throw new NotFoundError('Meter not found or not linked to your account', 'METER_NOT_FOUND');
+      }
+      const meter = store.meters.get(link.meterId);
+      if (meter && !meter.deletedAt) {
+        targetFeederIds = [meter.feederId];
+      }
+    } else {
+      targetFeederIds = links
+        .map((link) => {
+          const m = store.meters.get(link.meterId);
+          return m && !m.deletedAt ? m.feederId : null;
+        })
+        .filter(Boolean) as string[];
+    }
+
+    if (targetFeederIds.length === 0) {
+      return successResponse(res, {
+        meterNumber: 'None',
+        feederName: 'None',
+        schedules: [],
+        cached: false
+      });
+    }
+
+    const cacheKey = cacheService.getCustomerScheduleKey(req.user.sub, query.meterId);
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return successResponse(res, { ...cached, cached: true });
+    }
+
+    // Collect ONLY published schedule slots for targeted feeder(s)
+    const publishedSlots: any[] = [];
+    for (const sched of store.schedules.values()) {
+      if (sched.status === ScheduleStatus.PUBLISHED) {
+        if (query.startDate && sched.planningDate < query.startDate) continue;
+        if (query.endDate && sched.planningDate > query.endDate) continue;
+
+        for (const slot of store.scheduleSlots.values()) {
+          if (slot.scheduleId === sched.id) {
+            const assignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+              (a) => a.slotId === slot.id && targetFeederIds.includes(a.feederId)
+            );
+            for (const a of assignments) {
+              const feeder = store.feeders.get(a.feederId);
+              publishedSlots.push({
+                scheduleId: sched.id,
+                planningDate: sched.planningDate,
+                startTime: slot.startTime,
+                endTime: slot.endTime,
+                status: sched.status,
+                feederId: a.feederId,
+                feederName: feeder?.name || 'Unknown',
+                feederLoadMW: a.feederLoadMW,
+                targetDeficitMW: slot.targetDeficitMW,
+                actualDeficitMW: slot.actualDeficitMW
+              });
+            }
+          }
+        }
+      }
+    }
+
+    publishedSlots.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+    const context = getCustomerPrimaryMeter(req.user.sub);
+
+    const payload = {
+      meterNumber: context?.meter.meterNumber || 'All',
+      feederName: context?.feeder?.name || 'All Feeders',
+      meterId: query.meterId || 'all',
+      schedules: publishedSlots
+    };
+
+    await cacheService.set(cacheKey, payload, 300);
+
+    return successResponse(res, {
+      ...payload,
+      cached: false
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 customerRouter.get('/customers/me/schedule', custAuth, handleGetCustomerSchedule);
