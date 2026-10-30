@@ -50,7 +50,22 @@ export class CacheService {
   getGridStatusKey(zoneId?: string): string {
     return zoneId ? `grid:status:${zoneId}` : 'grid:status:all';
   }
+
+  getCustomerDashboardKey(userId: string): string {
+    return `schedule:customer:${userId}:dashboard`;
+  }
+
+  getCustomerScheduleKey(userId: string, meterId?: string): string {
+    return `schedule:customer:${userId}:upcoming:${meterId || 'all'}`;
+  }
+
+  async invalidateCustomerSchedules(userId?: string): Promise<void> {
+    if (userId) {
+      await this.delPattern(`schedule:customer:${userId}:*`);
+    } else {
+      await this.delPattern('schedule:customer:*');
+    }
+  }
 }
 
 export const cacheService = new CacheService();
-

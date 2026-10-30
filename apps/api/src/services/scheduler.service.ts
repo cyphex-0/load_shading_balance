@@ -431,6 +431,7 @@ export class SchedulerService {
     // Invalidate general grid cache and public schedules cache
     await cacheService.del('grid:status:all');
     await cacheService.delPattern('schedules:public:*');
+    await cacheService.invalidateCustomerSchedules();
 
     // Emit real-time Socket event
     socketEmitter.emitSchedulePublished({
@@ -473,6 +474,7 @@ export class SchedulerService {
     await cacheService.delPattern(`schedules:published:*:${schedule.planningDate}`);
     await cacheService.delPattern('schedules:public:*');
     await cacheService.del('grid:status:all');
+    await cacheService.invalidateCustomerSchedules();
 
     return schedule;
   }
