@@ -15,6 +15,7 @@ import {
   paginationQuerySchema,
   NotificationType,
   DeliveryStatus,
+  FaultType,
   CandidateFeederInput,
   FeederUsageHistoryInput,
   FairRotationEngineInput
@@ -2720,6 +2721,268 @@ const runSuite = async () => {
       Array.isArray(adminNotifRes.body.data) &&
       adminNotifRes.body.data.some((l: any) => l.status === DeliveryStatus.DELIVERED),
       'GET /api/v1/admin/notifications reflects updated delivery logs and status transitions'
+    );
+
+    // --- Phase 17 Verification Suite: Smart Outage Reporting & Planned-Conflict Resolution ---
+    logger.info('\n--- Phase 17 Verification Suite: Smart Outage Reporting & Conflict Resolution ---');
+
+    // Setup fresh test fixtures
+    const nowTimeP17 = new Date();
+    const testFeederPlanned: any = {
+      id: 'fdr_p17_planned',
+      substationId: 'sub_dhn_1',
+      name: 'P17 Planned Feeder',
+      code: 'FDR-P17-PLN',
+      capacityMW: 15,
+      currentLoadMW: 6,
+      status: FeederStatus.ONLINE,
+      isCritical: false,
+      createdAt: nowTimeP17.toISOString(),
+      updatedAt: nowTimeP17.toISOString()
+    };
+    store.feeders.set(testFeederPlanned.id, testFeederPlanned);
+
+    const testFeederUnplanned: any = {
+      id: 'fdr_p17_unplanned',
+      substationId: 'sub_dhn_1',
+      name: 'P17 Unplanned Feeder',
+      code: 'FDR-P17-UNP',
+      capacityMW: 12,
+      currentLoadMW: 5,
+      status: FeederStatus.ONLINE,
+      isCritical: false,
+      createdAt: nowTimeP17.toISOString(),
+      updatedAt: nowTimeP17.toISOString()
+    };
+    store.feeders.set(testFeederUnplanned.id, testFeederUnplanned);
+
+    const testMeterPlanned: any = {
+      id: 'mtr_p17_planned',
+      meterNumber: 'MTR-P17-PLN-01',
+      feederId: testFeederPlanned.id,
+      address: 'P17 Planned Zone Road 1',
+      createdAt: nowTimeP17.toISOString(),
+      updatedAt: nowTimeP17.toISOString()
+    };
+    store.meters.set(testMeterPlanned.id, testMeterPlanned);
+
+    const testMeterUnplanned: any = {
+      id: 'mtr_p17_unplanned',
+      meterNumber: 'MTR-P17-UNP-01',
+      feederId: testFeederUnplanned.id,
+      address: 'P17 Unplanned Zone Road 2',
+      createdAt: nowTimeP17.toISOString(),
+      updatedAt: nowTimeP17.toISOString()
+    };
+    store.meters.set(testMeterUnplanned.id, testMeterUnplanned);
+
+    // Link meters to usr_customer_1
+    store.customerMeters.set('cm_p17_pln', {
+      id: 'cm_p17_pln',
+      customerId: 'usr_customer_1',
+      meterId: testMeterPlanned.id,
+      isPrimary: false,
+      linkedAt: nowTimeP17.toISOString()
+    });
+    store.customerMeters.set('cm_p17_unp', {
+      id: 'cm_p17_unp',
+      customerId: 'usr_customer_1',
+      meterId: testMeterUnplanned.id,
+      isPrimary: false,
+      linkedAt: nowTimeP17.toISOString()
+    });
+
+    // 1. Meter Ownership Check (403 METER_NOT_LINKED)
+    const unlinkedMeterReportRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/outage-reports',
+      {
+        meterId: 'mtr_dhn_102',
+        description: 'Blackout on unlinked line',
+        faultType: FaultType.LINE_DOWN
+      },
+      customerToken
+    );
+    assert(
+      unlinkedMeterReportRes.status === 403 &&
+      unlinkedMeterReportRes.body.error.code === 'METER_NOT_LINKED',
+      'Smart Reporting IDOR: Submitting report on unlinked meter returns 403 METER_NOT_LINKED'
+    );
+
+    // 2. Active Published Schedule Slot Interception (Case A: Planned Outage)
+    const schedPlannedId = `sched_p17_active_${Date.now()}`;
+    const slotPlannedId = `slot_p17_active_${Date.now()}`;
+    const slotStartP17 = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const slotEndP17 = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    store.schedules.set(schedPlannedId, {
+      id: schedPlannedId,
+      planningDate: nowTimeP17.toISOString().split('T')[0],
+      totalDeficitMW: 25,
+      createdById: 'usr_admin_1',
+      status: ScheduleStatus.PUBLISHED,
+      publishedAt: nowTimeP17.toISOString(),
+      createdAt: nowTimeP17.toISOString(),
+      updatedAt: nowTimeP17.toISOString()
+    });
+    store.scheduleSlots.set(slotPlannedId, {
+      id: slotPlannedId,
+      scheduleId: schedPlannedId,
+      startTime: slotStartP17,
+      endTime: slotEndP17,
+      targetDeficitMW: 15,
+      actualDeficitMW: 6,
+      createdAt: nowTimeP17.toISOString()
+    });
+    store.scheduleFeederAssignments.set(`asgn_p17_${Date.now()}`, {
+      id: `asgn_p17_${Date.now()}`,
+      slotId: slotPlannedId,
+      feederId: testFeederPlanned.id,
+      loadMW: 6,
+      createdAt: nowTimeP17.toISOString()
+    });
+
+    const plannedReportRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/outage-reports',
+      {
+        meterId: testMeterPlanned.id,
+        description: 'Power is out completely',
+        faultType: FaultType.OTHER
+      },
+      customerToken
+    );
+    assert(
+      plannedReportRes.status === 200 &&
+      plannedReportRes.body.success === true &&
+      plannedReportRes.body.data.isPlanned === true &&
+      plannedReportRes.body.data.ticketCreated === false &&
+      plannedReportRes.body.data.classification === 'KNOWN_PLANNED_OUTAGE' &&
+      plannedReportRes.body.data.event !== undefined &&
+      plannedReportRes.body.data.scheduledEndTime === slotEndP17,
+      'Planned Slot Interception: Active published schedule slot intercepts report with KNOWN_PLANNED_OUTAGE (no ticket created)'
+    );
+
+    const savedEvent = store.outageReportEvents.get(plannedReportRes.body.data.event.id);
+    assert(
+      savedEvent !== undefined &&
+      savedEvent.classification === 'PLANNED_CONFLICT' &&
+      savedEvent.scheduleId === schedPlannedId &&
+      savedEvent.slotId === slotPlannedId,
+      'Audit Persistence: OutageReportEvent record safely stored in store.outageReportEvents without creating OutageTicket'
+    );
+
+    // 3. Expired / Inactive Schedule Slot Immunity (Case B: Unexpected Fault Ticket Created)
+    // Feeder testFeederUnplanned has NO active schedule slot
+    const unexpectedReportRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/outage-reports',
+      {
+        meterId: testMeterUnplanned.id,
+        description: 'Transformer exploded loudly with black smoke',
+        faultType: FaultType.TRANSFORMER,
+        landmark: 'Near corner bakery'
+      },
+      customerToken
+    );
+    assert(
+      unexpectedReportRes.status === 201 &&
+      unexpectedReportRes.body.success === true &&
+      unexpectedReportRes.body.data.isPlanned === false &&
+      unexpectedReportRes.body.data.ticketCreated === true &&
+      unexpectedReportRes.body.data.classification === 'UNPLANNED_FAULT' &&
+      unexpectedReportRes.body.data.ticket.faultType === FaultType.TRANSFORMER,
+      'Unexpected Fault: Unscheduled blackout creates OutageTicket with specified faultType and UNPLANNED_FAULT classification'
+    );
+
+    const createdTicketId = unexpectedReportRes.body.data.ticket.id;
+
+    // 4. Duplicate Active Report Suppression (409 DUPLICATE_ACTIVE_REPORT)
+    const duplicateReportRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/outage-reports',
+      {
+        meterId: testMeterUnplanned.id,
+        description: 'Another report while ticket is still active',
+        faultType: FaultType.TRANSFORMER
+      },
+      customerToken
+    );
+    assert(
+      duplicateReportRes.status === 409 &&
+      duplicateReportRes.body.error.code === 'DUPLICATE_ACTIVE_REPORT',
+      'Duplicate Suppression: Subsequent report on meter with active in-flight ticket returns 409 DUPLICATE_ACTIVE_REPORT'
+    );
+
+    // 5. Unified Customer Outage History (Both Fault Tickets & Planned Conflicts)
+    const unifiedHistoryRes = await request(
+      serverUrl,
+      'GET',
+      '/api/customers/me/outage-reports',
+      undefined,
+      customerToken
+    );
+    assert(
+      unifiedHistoryRes.status === 200 &&
+      unifiedHistoryRes.body.success === true &&
+      Array.isArray(unifiedHistoryRes.body.data) &&
+      unifiedHistoryRes.body.data.some((r: any) => r.type === 'UNPLANNED_FAULT' && r.id === createdTicketId) &&
+      unifiedHistoryRes.body.data.some((r: any) => r.type === 'PLANNED_CONFLICT' && r.id === savedEvent?.id),
+      'Unified Outage History: GET /api/customers/me/outage-reports returns chronological feed containing both faults and planned events'
+    );
+
+    // 6. Detailed Inspection of Planned Conflict Event
+    const conflictDetailRes = await request(
+      serverUrl,
+      'GET',
+      `/api/customers/me/outage-reports/${savedEvent?.id}`,
+      undefined,
+      customerToken
+    );
+    assert(
+      conflictDetailRes.status === 200 &&
+      conflictDetailRes.body.success === true &&
+      conflictDetailRes.body.data.type === 'PLANNED_CONFLICT' &&
+      conflictDetailRes.body.data.classification === 'PLANNED_CONFLICT' &&
+      conflictDetailRes.body.data.isPlanned === true &&
+      conflictDetailRes.body.data.meterNumber === testMeterPlanned.meterNumber,
+      'Report Detail: GET /api/customers/me/outage-reports/:id retrieves full details for planned conflict event'
+    );
+
+    // 7. Detailed Inspection of Unexpected Fault Ticket
+    const ticketDetailRes = await request(
+      serverUrl,
+      'GET',
+      `/api/customers/me/outage-reports/${createdTicketId}`,
+      undefined,
+      customerToken
+    );
+    assert(
+      ticketDetailRes.status === 200 &&
+      ticketDetailRes.body.success === true &&
+      ticketDetailRes.body.data.type === 'UNPLANNED_FAULT' &&
+      ticketDetailRes.body.data.faultType === FaultType.TRANSFORMER &&
+      Array.isArray(ticketDetailRes.body.data.history),
+      'Report Detail: GET /api/customers/me/outage-reports/:id retrieves fault ticket details with history'
+    );
+
+    // 8. IDOR Protection on Report Inspection
+    // Another user or random ID returns 404 TICKET_NOT_FOUND
+    const foreignInspectRes = await request(
+      serverUrl,
+      'GET',
+      '/api/customers/me/outage-reports/tkt_non_existent_or_foreign',
+      undefined,
+      customerToken
+    );
+    assert(
+      foreignInspectRes.status === 404 &&
+      foreignInspectRes.body.error.code === 'TICKET_NOT_FOUND',
+      'Report Inspection IDOR: Non-existent or foreign ticket returns 404 TICKET_NOT_FOUND'
     );
 
   } catch (err: any) {
