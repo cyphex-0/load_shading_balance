@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus, DeliveryStatus } from './enums';
+import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus, DeliveryStatus, FaultType } from './enums';
 
 // Auth validators
 export const registerSchema = z.object({
@@ -54,6 +54,7 @@ export const linkMeterSchema = z.object({
 export const reportOutageSchema = z.object({
   meterId: z.string().min(1, 'Meter ID is required'),
   description: z.string().min(5, 'Please provide more details about the outage'),
+  faultType: z.nativeEnum(FaultType).optional().default(FaultType.OTHER),
   landmark: z.string().optional()
 });
 

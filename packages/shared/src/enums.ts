@@ -1,3 +1,11 @@
+export enum FaultType {
+  TRANSFORMER = 'TRANSFORMER',
+  LINE_DOWN = 'LINE_DOWN',
+  CABLE_FAULT = 'CABLE_FAULT',
+  METER_FAULT = 'METER_FAULT',
+  OTHER = 'OTHER'
+}
+
 export enum UserRole {
   CUSTOMER = 'CUSTOMER',
   POWER_OPERATOR = 'POWER_OPERATOR',

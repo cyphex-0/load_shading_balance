@@ -7,7 +7,8 @@ import {
   AssignmentStatus,
   UpgradeRequestStatus,
   NotificationType,
-  DeliveryStatus
+  DeliveryStatus,
+  FaultType
 } from './enums';
 
 export interface ApiResponse<T = any> {
@@ -569,3 +570,46 @@ export interface CustomerDashboardDto {
   };
 }
 
+
+// ============================================================================
+// Phase 17: Smart Outage Reporting & Planned Conflict DTOs
+// ============================================================================
+
+export interface OutageReportEventDto {
+  id: string;
+  customerId: string;
+  meterId: string;
+  feederId: string;
+  classification: 'PLANNED_CONFLICT';
+  scheduleId?: string | null;
+  slotId?: string | null;
+  plannedEndTime: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface OutageReportListItemDto {
+  id: string;
+  type: 'UNPLANNED_FAULT' | 'PLANNED_CONFLICT';
+  ticketNumber?: string | null;
+  meterId: string;
+  meterNumber: string;
+  feederId: string;
+  feederName: string;
+  status: string;
+  description: string;
+  isPlanned: boolean;
+  scheduledEndTime?: string | null;
+  reportedAt: string;
+  createdAt: string;
+}
+
+export interface ConflictResolutionResultDto {
+  isPlanned: boolean;
+  ticketCreated: boolean;
+  classification?: 'KNOWN_PLANNED_OUTAGE' | 'UNPLANNED_FAULT';
+  scheduledEndTime?: string;
+  ticket?: any;
+  event?: OutageReportEventDto;
+  message: string;
+}

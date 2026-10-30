@@ -5,6 +5,7 @@ import {
   FeederStatus,
   ScheduleStatus,
   OutageStatus,
+  FaultType,
   AssignmentStatus,
   UpgradeRequestStatus,
   NotificationType,
@@ -122,12 +123,26 @@ export interface OutageTicketRecord {
   description: string;
   landmark?: string | null;
   isPlanned: boolean;
+  faultType?: FaultType;
   status: OutageStatus;
   reportedAt: string;
   resolvedAt?: string | null;
   resolutionNotes?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OutageReportEventRecord {
+  id: string;
+  customerId: string;
+  meterId: string;
+  feederId: string;
+  classification: 'PLANNED_CONFLICT';
+  scheduleId?: string | null;
+  slotId?: string | null;
+  plannedEndTime: string;
+  message: string;
+  createdAt: string;
 }
 
 export interface TechnicianAssignmentRecord {
@@ -241,6 +256,7 @@ export class MemoryStore {
   public scheduleSlots: Map<string, ScheduleSlotRecord> = new Map();
   public scheduleFeederAssignments: Map<string, ScheduleFeederAssignmentRecord> = new Map();
   public outageTickets: Map<string, OutageTicketRecord> = new Map();
+  public outageReportEvents: Map<string, OutageReportEventRecord> = new Map();
   public technicianAssignments: Map<string, TechnicianAssignmentRecord> = new Map();
   public outageAttachments: Map<string, OutageAttachmentRecord> = new Map();
   public outageStatusHistories: Map<string, OutageStatusHistoryRecord> = new Map();
@@ -277,6 +293,7 @@ export class MemoryStore {
     this.scheduleSlots.clear();
     this.scheduleFeederAssignments.clear();
     this.outageTickets.clear();
+    this.outageReportEvents.clear();
     this.technicianAssignments.clear();
     this.outageAttachments.clear();
     this.outageStatusHistories.clear();

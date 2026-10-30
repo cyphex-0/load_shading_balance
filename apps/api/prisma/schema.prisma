@@ -33,6 +33,14 @@ enum ScheduleStatus {
   CANCELLED
 }
 
+enum FaultType {
+  TRANSFORMER
+  LINE_DOWN
+  CABLE_FAULT
+  METER_FAULT
+  OTHER
+}
+
 enum OutageStatus {
   REPORTED
   ASSIGNED
@@ -93,6 +101,7 @@ model User {
   sessions       Session[]
   meters         CustomerMeter[]
   outages        OutageTicket[]        @relation("CustomerOutages")
+  reportEvents   OutageReportEvent[]   @relation("CustomerReportEvents")
   assignments    TechnicianAssignment[] @relation("TechnicianAssigned")
   createdAssignments TechnicianAssignment[] @relation("DispatcherAssignments")
   createdSchedules LoadSheddingSchedule[]
@@ -189,6 +198,7 @@ model Feeder {
   substation   Substation   @relation(fields: [substationId], references: [id], onDelete: Restrict)
   meters       Meter[]
   outages      OutageTicket[]
+  reportEvents OutageReportEvent[]
   assignments  ScheduleFeederAssignment[]
   upgradeRequests InfrastructureRequest[]
 
@@ -209,6 +219,7 @@ model Meter {
   feeder      Feeder    @relation(fields: [feederId], references: [id], onDelete: Restrict)
   customers   CustomerMeter[]
   outages     OutageTicket[]
+  reportEvents OutageReportEvent[]
 
   @@index([feederId])
 }
@@ -287,6 +298,7 @@ model OutageTicket {
   feederId        String
   description     String
   landmark        String?
+  faultType       FaultType    @default(OTHER)
   isPlanned       Boolean      @default(false)
   status          OutageStatus @default(REPORTED)
   reportedAt      DateTime     @default(now())
@@ -411,6 +423,26 @@ model NotificationDeliveryLog {
   notification     Notification?  @relation(fields: [notificationId], references: [id], onDelete: SetNull)
 
   @@index([status])
+}
+
+model OutageReportEvent {
+  id              String   @id @default(uuid())
+  customerId      String
+  meterId         String
+  feederId        String
+  classification  String   @default("PLANNED_CONFLICT")
+  scheduleId      String?
+  slotId          String?
+  plannedEndTime  DateTime
+  message         String
+  createdAt       DateTime @default(now())
+
+  customer        User     @relation("CustomerReportEvents", fields: [customerId], references: [id])
+  meter           Meter    @relation(fields: [meterId], references: [id])
+  feeder          Feeder   @relation(fields: [feederId], references: [id])
+
+  @@index([customerId])
+  @@index([feederId])
 }
 
 model AuditLog {
