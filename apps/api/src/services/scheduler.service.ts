@@ -1,4 +1,11 @@
-import { ScheduleStatus, FeederStatus, NotificationType, SocketEvent } from '@load-shedding/shared';
+import {
+  ScheduleStatus,
+  FeederStatus,
+  NotificationType,
+  SocketEvent,
+  CandidateFeederInput,
+  FeederUsageHistoryInput
+} from '@load-shedding/shared';
 import {
   store,
   ScheduleRecord,
@@ -11,6 +18,7 @@ import { notificationService } from './notification.service';
 import { socketEmitter } from '../sockets/socket.server';
 import { AppError } from '../utils/response';
 import { logger } from '../utils/logger';
+import { computeFairRotationSchedule } from './scheduler/fair-rotation.engine';
 
 export interface GenerateScheduleParams {
   planningDate: string; // YYYY-MM-DD
@@ -26,46 +34,34 @@ export class SchedulerService {
   async generateDraft(params: GenerateScheduleParams): Promise<ScheduleRecord & { slots: any[] }> {
     const { planningDate, deficitMW, startTime, endTime, slotDurationMinutes, zoneIds, createdById } = params;
 
-    // Parse start and end hours
-    const [startH, startM] = startTime.split(':').map(Number);
-    const [endH, endM] = endTime.split(':').map(Number);
-    const startTotalMinutes = startH * 60 + startM;
-    const endTotalMinutes = endH * 60 + endM;
-
-    if (endTotalMinutes <= startTotalMinutes) {
-      throw new AppError('End time must be after start time', 400, 'INVALID_TIME_RANGE');
-    }
-
-    const totalDurationMinutes = endTotalMinutes - startTotalMinutes;
-    const totalSlots = Math.ceil(totalDurationMinutes / slotDurationMinutes);
-
-    // 1. Gather all candidate feeders
-    let eligibleFeeders = Array.from(store.feeders.values()).filter((f) => !f.deletedAt);
-
-    if (zoneIds && zoneIds.length > 0) {
-      eligibleFeeders = eligibleFeeders.filter((f) => {
+    // 1. Gather all active candidate feeders from store
+    const candidateFeeders: CandidateFeederInput[] = Array.from(store.feeders.values())
+      .filter((f) => !f.deletedAt)
+      .map((f) => {
         const sub = store.substations.get(f.substationId);
-        return sub && zoneIds.includes(sub.zoneId);
+        const zone = sub ? store.zones.get(sub.zoneId) : null;
+        return {
+          id: f.id,
+          name: f.name,
+          code: f.code,
+          capacityMW: f.capacityMW,
+          isCritical: f.isCritical,
+          substationId: f.substationId,
+          substationName: sub?.name || 'Unknown',
+          zoneId: sub?.zoneId || null,
+          zoneName: zone?.name || 'Unknown'
+        };
       });
-    }
 
-    // RULE 1: Hard filter out Critical Feeders (Hospital, Emergency)
-    const criticalFeeders = eligibleFeeders.filter((f) => f.isCritical);
-    eligibleFeeders = eligibleFeeders.filter((f) => !f.isCritical);
-
-    logger.info(
-      `Scheduler draft generation: Found ${eligibleFeeders.length} eligible feeders, excluded ${criticalFeeders.length} critical feeders.`
-    );
-
-    // RULE 2: No-Double-Cut Rule check across already PUBLISHED schedules on the same calendar day
-    const alreadyScheduledFeederIds = new Set<string>();
+    // 2. Identify feeders already committed to PUBLISHED schedules on the same calendar day (Law 2)
+    const alreadyCommittedFeederIds = new Set<string>();
     for (const sched of store.schedules.values()) {
       if (sched.planningDate === planningDate && sched.status === ScheduleStatus.PUBLISHED) {
         for (const slot of store.scheduleSlots.values()) {
           if (slot.scheduleId === sched.id) {
             for (const assign of store.scheduleFeederAssignments.values()) {
               if (assign.slotId === slot.id) {
-                alreadyScheduledFeederIds.add(assign.feederId);
+                alreadyCommittedFeederIds.add(assign.feederId);
               }
             }
           }
@@ -73,28 +69,54 @@ export class SchedulerService {
       }
     }
 
-    // Filter out feeders already cut on this calendar day
-    const availableForToday = eligibleFeeders.filter((f) => !alreadyScheduledFeederIds.has(f.id));
+    // 3. Compile historical metrics for multi-factor equity ranking (Law 3)
+    const historicalMetrics: FeederUsageHistoryInput[] = candidateFeeders.map((f) => {
+      let cutCount = 0;
+      let cumulativeHours = 0;
+      let latestCutTime: string | null = null;
 
-    // RULE 3: Fair Rotation Sorting
-    // Score feeders by how many total assignments they've had in history (lower is prioritized)
-    const feederUsageCount = new Map<string, number>();
-    for (const f of availableForToday) {
-      let count = 0;
       for (const assign of store.scheduleFeederAssignments.values()) {
-        if (assign.feederId === f.id) count++;
-      }
-      feederUsageCount.set(f.id, count);
-    }
+        if (assign.feederId === f.id) {
+          cutCount++;
+          const slot = store.scheduleSlots.get(assign.slotId);
+          if (slot) {
+            const durationH =
+              (new Date(slot.endTime).getTime() - new Date(slot.startTime).getTime()) / (1000 * 60 * 60);
+            if (durationH > 0) cumulativeHours += durationH;
 
-    // Sort available feeders by usage count ascending (least used first)
-    availableForToday.sort((a, b) => {
-      const usageA = feederUsageCount.get(a.id) || 0;
-      const usageB = feederUsageCount.get(b.id) || 0;
-      return usageA - usageB;
+            if (!latestCutTime || new Date(slot.startTime).getTime() > new Date(latestCutTime).getTime()) {
+              latestCutTime = slot.startTime;
+            }
+          }
+        }
+      }
+
+      return {
+        feederId: f.id,
+        totalCutsCount: cutCount,
+        cumulativeShedHours: Math.round(cumulativeHours * 10) / 10,
+        lastShedAt: latestCutTime
+      };
     });
 
-    // Create Draft Schedule Record
+    // 4. Invoke the pure deterministic scheduling engine
+    const plan = computeFairRotationSchedule({
+      planningDate,
+      startTime,
+      endTime,
+      slotDurationMinutes,
+      targetDeficitMW: deficitMW,
+      candidateFeeders,
+      historicalMetrics,
+      alreadyCommittedFeederIds: Array.from(alreadyCommittedFeederIds),
+      zoneFilterIds: zoneIds
+    });
+
+    logger.info(
+      `Scheduler draft generation: Found ${plan.eligibleFeedersCount} eligible feeders, excluded ${plan.criticalExcludedCount} critical feeders.`
+    );
+
+    // 5. Persist the generated schedule and its slots to the database/store
     const scheduleId = `sched_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const schedule: ScheduleRecord = {
       id: scheduleId,
@@ -104,87 +126,44 @@ export class SchedulerService {
       createdById,
       publishedAt: null,
       cancelledAt: null,
-      notes: `Draft generated via Fair-Rotation Algorithm for ${totalSlots} slots.`,
+      notes: `Draft generated via Fair-Rotation Algorithm for ${plan.totalSlots} slots.`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
     store.schedules.set(schedule.id, schedule);
 
-    // Track which feeders are selected in THIS draft to enforce no-double-cut within the same schedule
-    const usedInThisSchedule = new Set<string>();
     const createdSlots: any[] = [];
 
-    // Distribute feeders across slots
-    for (let i = 0; i < totalSlots; i++) {
-      const slotStartMin = startTotalMinutes + i * slotDurationMinutes;
-      const slotEndMin = Math.min(startTotalMinutes + (i + 1) * slotDurationMinutes, endTotalMinutes);
-
-      const slotStartH = Math.floor(slotStartMin / 60)
-        .toString()
-        .padStart(2, '0');
-      const slotStartM = (slotStartMin % 60).toString().padStart(2, '0');
-      const slotEndH = Math.floor(slotEndMin / 60)
-        .toString()
-        .padStart(2, '0');
-      const slotEndM = (slotEndMin % 60).toString().padStart(2, '0');
-
-      const slotStartTimeISO = new Date(`${planningDate}T${slotStartH}:${slotStartM}:00.000Z`).toISOString();
-      const slotEndTimeISO = new Date(`${planningDate}T${slotEndH}:${slotEndM}:00.000Z`).toISOString();
-
-      const slotId = `slot_${scheduleId}_${i + 1}`;
-      let accumulatedMW = 0;
-      const slotAssignments: ScheduleFeederAssignmentRecord[] = [];
-      const slotFeedersDetails: any[] = [];
-
-      // Select feeders for this slot up to deficitMW
-      for (const feeder of availableForToday) {
-        if (usedInThisSchedule.has(feeder.id)) continue;
-
-        slotAssignments.push({
-          id: `asgn_${slotId}_${feeder.id}`,
-          slotId,
-          feederId: feeder.id,
-          loadMW: feeder.capacityMW,
-          createdAt: new Date().toISOString()
-        });
-        usedInThisSchedule.add(feeder.id);
-        accumulatedMW += feeder.capacityMW;
-
-        const sub = store.substations.get(feeder.substationId);
-        const zone = sub ? store.zones.get(sub.zoneId) : null;
-
-        slotFeedersDetails.push({
-          feederId: feeder.id,
-          name: feeder.name,
-          code: feeder.code,
-          capacityMW: feeder.capacityMW,
-          substationName: sub?.name || 'Unknown',
-          zoneName: zone?.name || 'Unknown'
-        });
-
-        if (accumulatedMW >= deficitMW) {
-          break; // Slot target satisfied
-        }
-      }
-
+    for (const planSlot of plan.slots) {
+      const slotId = `slot_${scheduleId}_${planSlot.slotIndex}`;
       const slotRecord: ScheduleSlotRecord = {
         id: slotId,
         scheduleId,
-        startTime: slotStartTimeISO,
-        endTime: slotEndTimeISO,
-        targetDeficitMW: deficitMW,
-        actualDeficitMW: accumulatedMW,
+        startTime: planSlot.startTime,
+        endTime: planSlot.endTime,
+        targetDeficitMW: planSlot.targetDeficitMW,
+        actualDeficitMW: planSlot.actualDeficitMW,
         createdAt: new Date().toISOString()
       };
-
       store.scheduleSlots.set(slotRecord.id, slotRecord);
-      for (const asgn of slotAssignments) {
-        store.scheduleFeederAssignments.set(asgn.id, asgn);
+
+      for (const assigned of planSlot.assignedFeeders) {
+        const asgnId = `asgn_${slotId}_${assigned.feederId}`;
+        const asgnRecord: ScheduleFeederAssignmentRecord = {
+          id: asgnId,
+          slotId,
+          feederId: assigned.feederId,
+          loadMW: assigned.capacityMW,
+          createdAt: new Date().toISOString()
+        };
+        store.scheduleFeederAssignments.set(asgnRecord.id, asgnRecord);
       }
 
       createdSlots.push({
         ...slotRecord,
-        feeders: slotFeedersDetails
+        shortfallMW: planSlot.shortfallMW,
+        isDeficitSatisfied: planSlot.isDeficitSatisfied,
+        feeders: planSlot.assignedFeeders
       });
     }
 
