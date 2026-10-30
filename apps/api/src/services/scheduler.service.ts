@@ -512,7 +512,7 @@ export class SchedulerService {
 
       // Role-based draft visibility:
       // Customers and general users cannot see DRAFT schedules.
-      if (user.role === UserRole.CUSTOMER && sched.status === ScheduleStatus.DRAFT) {
+      if (user.role === UserRole.CUSTOMER && sched.status !== ScheduleStatus.PUBLISHED) {
         continue;
       }
 

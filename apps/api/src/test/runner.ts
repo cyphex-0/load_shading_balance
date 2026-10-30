@@ -37,11 +37,13 @@ const request = async (
   method: string,
   path: string,
   body?: any,
-  token?: string
+  token?: string,
+  extraHeaders?: Record<string, string>
 ): Promise<{ status: number; body: any }> => {
   const url = `${serverUrl}${path}`;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    ...(extraHeaders || {})
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -2081,6 +2083,219 @@ const runSuite = async () => {
     );
     assert(!draftHospAssigned, 'Draft schedule via Fair-Rotation Engine strictly enforces Law 1 hospital immunity');
 
+    // ========================================================================
+    // Phase 14: Schedule Persistence, Review, Publish, Idempotency, and Feeder Lookup
+    // ========================================================================
+    const createdSchedId = fairRotationDraftRes.body.data.id;
+    const slot0Id = fairRotationDraftRes.body.data.slots[0].id;
+    const slot1Id = fairRotationDraftRes.body.data.slots[1].id;
+
+    // 21a. Audit Trail: ScheduleGenerationRun Persistence
+    const genRun = store.scheduleGenerationRuns.get(`sgr_${createdSchedId}`);
+    assert(
+      !!genRun &&
+      genRun.operatorId === opLogin.body.data.user.id &&
+      genRun.algorithmVersion === 'v1.0.0-fair-rotation' &&
+      genRun.totalSlots === 2 &&
+      genRun.targetDeficitMW === 15.0,
+      'Phase 14 Audit Trail: ScheduleGenerationRun persisted with operator ID, algorithm version, and diagnostics'
+    );
+
+    // 21b. Draft Metadata Update: PATCH /api/v1/operator/schedules/:id
+    const patchNotesRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/operator/schedules/${createdSchedId}`,
+      { notes: 'Operator review notes: Approved for peak load window' },
+      opToken
+    );
+    assert(
+      patchNotesRes.status === 200 &&
+      patchNotesRes.body.data.notes === 'Operator review notes: Approved for peak load window',
+      'PATCH /api/v1/operator/schedules/:id updates draft notes'
+    );
+
+    // 21c. Manual Slot Adjustment Validation - Law 1: Critical Feeder Rejection
+    const adjustCriticalRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/operator/schedules/${createdSchedId}/slots/${slot0Id}`,
+      { feederIds: ['fdr_dhn_hosp'] },
+      opToken
+    );
+    assert(
+      adjustCriticalRes.status === 400 &&
+      adjustCriticalRes.body.error.code === 'CRITICAL_FEEDER_PROTECTED',
+      'Slot Adjustment Law 1: Rejects manual assignment of critical hospital feeder (400 CRITICAL_FEEDER_PROTECTED)'
+    );
+
+    // 21d. Manual Slot Adjustment Validation - Law 2: Same-Day Duplicate Cut Rejection
+    const slot0FeederId = fairRotationDraftRes.body.data.slots[0].feeders[0].feederId;
+    const adjustDuplicateRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/operator/schedules/${createdSchedId}/slots/${slot1Id}`,
+      { feederIds: [slot0FeederId] },
+      opToken
+    );
+    assert(
+      adjustDuplicateRes.status === 400 &&
+      adjustDuplicateRes.body.error.code === 'FEEDER_ALREADY_COMMITTED',
+      'Slot Adjustment Law 2: Rejects assigning feeder already scheduled in another slot on the same day (400 FEEDER_ALREADY_COMMITTED)'
+    );
+
+    // 21e. Publish Schedule with Idempotency Key
+    const publishIdempKey = 'idemp_key_test_phase_14_pub';
+    const publishRes1 = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${createdSchedId}/publish`,
+      {},
+      opToken,
+      { 'Idempotency-Key': publishIdempKey }
+    );
+    assert(
+      publishRes1.status === 200 &&
+      publishRes1.body.data.schedule.status === ScheduleStatus.PUBLISHED,
+      'POST /api/operator/schedules/:id/publish commits PUBLISHED state and sends notifications'
+    );
+
+    // 21f. Publish Idempotency: Repeating same call returns cached result without re-executing
+    const publishRes2 = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${createdSchedId}/publish`,
+      {},
+      opToken,
+      { 'Idempotency-Key': publishIdempKey }
+    );
+    assert(
+      publishRes2.status === 200 &&
+      publishRes2.body.data.schedule.status === ScheduleStatus.PUBLISHED,
+      'Publish Idempotency: Repeated call with identical Idempotency-Key returns cached response without duplicate side effects'
+    );
+
+    // 21g. State Machine Invariants: Non-Draft Schedule Mutation Rejections
+    const patchPublishedNotesRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/operator/schedules/${createdSchedId}`,
+      { notes: 'Illegal update' },
+      opToken
+    );
+    assert(
+      patchPublishedNotesRes.status === 409 &&
+      patchPublishedNotesRes.body.error.code === 'INVALID_STATE_TRANSITION',
+      'State Machine Invariant: Reject editing metadata on PUBLISHED schedule (409 INVALID_STATE_TRANSITION)'
+    );
+
+    const adjustPublishedSlotRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/operator/schedules/${createdSchedId}/slots/${slot0Id}`,
+      { feederIds: ['fdr_dhn_1'] },
+      opToken
+    );
+    assert(
+      adjustPublishedSlotRes.status === 409 &&
+      adjustPublishedSlotRes.body.error.code === 'INVALID_STATE_TRANSITION',
+      'State Machine Invariant: Reject slot adjustment on PUBLISHED schedule (409 INVALID_STATE_TRANSITION)'
+    );
+
+    const rePublishRes = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${createdSchedId}/publish`,
+      {},
+      opToken
+    );
+    assert(
+      rePublishRes.status === 409 &&
+      rePublishRes.body.error.code === 'INVALID_STATE_TRANSITION',
+      'State Machine Invariant: Reject publishing an already PUBLISHED schedule (409 INVALID_STATE_TRANSITION)'
+    );
+
+    // 21h. Cancellation & State Invariant
+    const cancelRes = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${createdSchedId}/cancel`,
+      {},
+      opToken
+    );
+    assert(
+      cancelRes.status === 200 &&
+      cancelRes.body.data.status === ScheduleStatus.CANCELLED,
+      'POST /api/operator/schedules/:id/cancel cancels schedule'
+    );
+
+    const reCancelRes = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${createdSchedId}/cancel`,
+      {},
+      opToken
+    );
+    assert(
+      reCancelRes.status === 409 &&
+      reCancelRes.body.error.code === 'INVALID_STATE_TRANSITION',
+      'State Machine Invariant: Reject cancelling an already CANCELLED schedule (409 INVALID_STATE_TRANSITION)'
+    );
+
+    // 21i. Feeder Schedule Lookup & Scoping (GET /api/v1/schedules/feeders/:feederId)
+    // 1. Operator queries Dhanmondi feeder (fdr_dhn_1) -> 200 OK
+    const opFeederSchedRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/schedules/feeders/fdr_dhn_1',
+      undefined,
+      opToken
+    );
+    assert(
+      opFeederSchedRes.status === 200 && Array.isArray(opFeederSchedRes.body.data),
+      'GET /api/v1/schedules/feeders/:feederId returns feeder schedule slots for Operator'
+    );
+
+    // 2. Zone Manager for Dhanmondi queries Dhanmondi feeder -> 200 OK
+    const zmDhnRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/schedules/feeders/fdr_dhn_1',
+      undefined,
+      managerToken
+    );
+    assert(
+      zmDhnRes.status === 200,
+      'GET /api/v1/schedules/feeders/:feederId allows Zone Manager to access feeder in their assigned zone'
+    );
+
+    // 3. Zone Manager for Dhanmondi queries Mirpur feeder (fdr_mir_1) -> 403 Forbidden
+    const zmMirRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/schedules/feeders/fdr_mir_1',
+      undefined,
+      managerToken
+    );
+    assert(
+      zmMirRes.status === 403 && zmMirRes.body.error.code === 'FORBIDDEN',
+      'GET /api/v1/schedules/feeders/:feederId strictly blocks Zone Manager from cross-zone feeder query (403 FORBIDDEN)'
+    );
+
+    // 4. Customer queries feeder -> only sees published schedules, not drafts
+    const custFeederSchedRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/schedules/feeders/fdr_dhn_1',
+      undefined,
+      customerToken
+    );
+    assert(
+      custFeederSchedRes.status === 200 &&
+      custFeederSchedRes.body.data.every((s: any) => s.scheduleStatus === ScheduleStatus.PUBLISHED),
+      'Customer Schedule View: Customer query to /api/v1/schedules/feeders/:feederId strictly omits draft schedules'
+    );
+
   } catch (err: any) {
     logger.error('Test execution error:', err);
     failed++;
@@ -2096,3 +2311,5 @@ const runSuite = async () => {
 };
 
 runSuite();
+
+
