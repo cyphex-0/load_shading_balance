@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus, DeliveryStatus, FaultType } from './enums';
+import { UserRole, UserStatus, FeederStatus, UpgradeRequestStatus, ScheduleStatus, DeliveryStatus, FaultType, OutageStatus } from './enums';
 
 // Auth validators
 export const registerSchema = z.object({
@@ -74,6 +74,10 @@ export const adjustSlotSchema = z.object({
 
 export const assignTechnicianSchema = z.object({
   technicianId: z.string().min(1, 'Technician ID is required')
+});
+
+export const cancelTicketSchema = z.object({
+  reason: z.string().min(3, 'Cancellation reason is required')
 });
 
 export const resolveTicketSchema = z.object({
@@ -321,4 +325,11 @@ export const notificationDeliveryLogQuerySchema = paginationQuerySchema.extend({
   status: z.nativeEnum(DeliveryStatus).optional(),
   channel: z.string().optional(),
   phone: z.string().optional()
+});
+
+export const outageQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(OutageStatus).optional(),
+  zoneId: z.string().optional(),
+  feederId: z.string().optional(),
+  faultType: z.nativeEnum(FaultType).optional()
 });

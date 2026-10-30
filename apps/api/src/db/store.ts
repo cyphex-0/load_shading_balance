@@ -128,6 +128,11 @@ export interface OutageTicketRecord {
   reportedAt: string;
   resolvedAt?: string | null;
   resolutionNotes?: string | null;
+  assignedAt?: string | null;
+  enRouteAt?: string | null;
+  repairingAt?: string | null;
+  cancelledAt?: string | null;
+  cancelledReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }

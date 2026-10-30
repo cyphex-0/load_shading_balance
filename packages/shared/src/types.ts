@@ -613,3 +613,68 @@ export interface ConflictResolutionResultDto {
   event?: OutageReportEventDto;
   message: string;
 }
+
+// ============================================================================
+// Phase 18: Outage State Machine & Technician Dispatch DTOs
+// ============================================================================
+
+export interface OutageStatusHistoryDto {
+  id: string;
+  ticketId: string;
+  previousStatus?: OutageStatus | null;
+  newStatus: OutageStatus;
+  changedById?: string | null;
+  changedByName?: string | null;
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface OutageDetailDto {
+  id: string;
+  ticketNumber: string;
+  customerId: string;
+  customerName?: string;
+  customerPhone?: string | null;
+  meterId: string;
+  meterNumber: string;
+  meterAddress?: string;
+  feederId: string;
+  feederName: string;
+  feederCode?: string;
+  substationId?: string;
+  substationName?: string;
+  zoneId?: string;
+  zoneName?: string;
+  assignedTechnicianId?: string | null;
+  assignedTechnicianName?: string | null;
+  assignedTechnicianPhone?: string | null;
+  status: OutageStatus;
+  faultType: FaultType;
+  description: string;
+  landmark?: string | null;
+  resolutionNotes?: string | null;
+  reportedAt: string;
+  assignedAt?: string | null;
+  enRouteAt?: string | null;
+  repairingAt?: string | null;
+  resolvedAt?: string | null;
+  cancelledAt?: string | null;
+  cancelledReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  history?: OutageStatusHistoryDto[];
+}
+
+export interface OutageTransitionResultDto {
+  ticket: OutageDetailDto;
+  previousStatus: OutageStatus;
+  newStatus: OutageStatus;
+  transitionedAt: string;
+}
+
+export interface AutoAssignResultDto {
+  ticketId: string;
+  technicianId: string;
+  technicianName: string;
+  assignedAt: string;
+}
