@@ -272,3 +272,17 @@ export const fairRotationEngineInputSchema = z.object({
 });
 
 
+
+// ============================================================================
+// Phase 14: Schedule Persistence, Review, Publish, and Feeder Lookup Schemas
+// ============================================================================
+
+export const updateScheduleMetadataSchema = z.object({
+  notes: z.string().max(1000, 'Notes cannot exceed 1000 characters').optional()
+});
+
+export const feederScheduleQuerySchema = paginationQuerySchema.extend({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Start date must be YYYY-MM-DD').optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'End date must be YYYY-MM-DD').optional(),
+  status: z.nativeEnum(ScheduleStatus).optional()
+});

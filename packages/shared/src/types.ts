@@ -463,3 +463,37 @@ export interface FairRotationSchedulePlan {
 }
 
 
+
+// ============================================================================
+// Phase 14: Schedule Persistence, Generation Run, and Feeder Schedules
+// ============================================================================
+
+export interface ScheduleGenerationRunRecord {
+  id: string;
+  scheduleId: string;
+  operatorId: string;
+  planningDate: string;
+  algorithmVersion: string;
+  targetDeficitMW: number;
+  selectedMW: number;
+  shortfallMW: number;
+  totalSlots: number;
+  eligibleFeedersCount: number;
+  criticalExcludedCount: number;
+  sameDayExcludedCount: number;
+  diagnostics: Record<string, any>;
+  createdAt: string;
+}
+
+export interface FeederScheduleSlotDto {
+  scheduleId: string;
+  planningDate: string;
+  scheduleStatus: ScheduleStatus;
+  slotId: string;
+  startTime: string;
+  endTime: string;
+  targetDeficitMW: number;
+  actualDeficitMW: number;
+  feederLoadMW: number;
+  isPublished: boolean;
+}
