@@ -391,3 +391,75 @@ export interface ActiveOutageItemDto {
   } | null;
 }
 
+// ============================================================================
+// Phase 13: Fair-Rotation Scheduling Engine DTOs & Interfaces
+// ============================================================================
+
+export interface CandidateFeederInput {
+  id: string;
+  name: string;
+  code: string;
+  capacityMW: number;
+  isCritical: boolean;
+  substationId: string;
+  substationName: string;
+  zoneId?: string | null;
+  zoneName?: string | null;
+}
+
+export interface FeederUsageHistoryInput {
+  feederId: string;
+  totalCutsCount: number;
+  cumulativeShedHours: number;
+  lastShedAt?: string | null;
+}
+
+export interface FairRotationEngineInput {
+  planningDate: string;
+  startTime: string;
+  endTime: string;
+  slotDurationMinutes: number;
+  targetDeficitMW: number;
+  candidateFeeders: CandidateFeederInput[];
+  historicalMetrics?: FeederUsageHistoryInput[];
+  alreadyCommittedFeederIds?: string[];
+  zoneFilterIds?: string[];
+  operationalTimezone?: string;
+}
+
+export interface AllocatedFeederSlotItem {
+  feederId: string;
+  name: string;
+  code: string;
+  capacityMW: number;
+  substationName: string;
+  zoneName: string;
+  equityScore: number;
+}
+
+export interface PlannedSlotOutput {
+  slotIndex: number;
+  startTime: string;
+  endTime: string;
+  targetDeficitMW: number;
+  actualDeficitMW: number;
+  shortfallMW: number;
+  isDeficitSatisfied: boolean;
+  assignedFeeders: AllocatedFeederSlotItem[];
+}
+
+export interface FairRotationSchedulePlan {
+  planningDate: string;
+  targetDeficitMW: number;
+  totalDurationMinutes: number;
+  totalSlots: number;
+  overallTargetMWh: number;
+  overallActualMWh: number;
+  overallShortfallMWh: number;
+  eligibleFeedersCount: number;
+  criticalExcludedCount: number;
+  sameDayExcludedCount: number;
+  slots: PlannedSlotOutput[];
+}
+
+

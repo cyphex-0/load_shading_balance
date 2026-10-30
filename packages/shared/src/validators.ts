@@ -235,3 +235,40 @@ export const activeOutagesQuerySchema = paginationQuerySchema.extend({
   outageType: z.enum(['PLANNED', 'UNPLANNED']).optional()
 });
 
+// ============================================================================
+// Phase 13: Fair-Rotation Scheduling Engine Schemas
+// ============================================================================
+
+export const candidateFeederInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  code: z.string().min(1),
+  capacityMW: z.number().positive(),
+  isCritical: z.boolean(),
+  substationId: z.string().min(1),
+  substationName: z.string().min(1),
+  zoneId: z.string().nullable().optional(),
+  zoneName: z.string().nullable().optional()
+});
+
+export const feederUsageHistoryInputSchema = z.object({
+  feederId: z.string().min(1),
+  totalCutsCount: z.number().int().nonnegative().default(0),
+  cumulativeShedHours: z.number().nonnegative().default(0),
+  lastShedAt: z.string().nullable().optional()
+});
+
+export const fairRotationEngineInputSchema = z.object({
+  planningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be formatted as YYYY-MM-DD'),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Start time must be HH:MM'),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'End time must be HH:MM'),
+  slotDurationMinutes: z.number().int().min(15).max(360).default(60),
+  targetDeficitMW: z.number().positive('Deficit must be positive'),
+  candidateFeeders: z.array(candidateFeederInputSchema).min(1, 'At least one candidate feeder is required'),
+  historicalMetrics: z.array(feederUsageHistoryInputSchema).optional(),
+  alreadyCommittedFeederIds: z.array(z.string()).optional(),
+  zoneFilterIds: z.array(z.string()).optional(),
+  operationalTimezone: z.string().default('Asia/Dhaka')
+});
+
+
