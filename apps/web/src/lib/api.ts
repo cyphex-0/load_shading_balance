@@ -1,6 +1,8 @@
 import { ApiResponse } from '@load-shedding/shared';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || 'https://load-shading-balance.onrender.com'
+).replace(/\/$/, '');
 
 export class ApiClient {
   private static getToken(): string | null {
