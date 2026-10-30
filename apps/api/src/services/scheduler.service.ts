@@ -421,7 +421,8 @@ export class SchedulerService {
             'Load Shedding Schedule Published',
             `Load shedding schedule published for ${schedule.planningDate} covering your meter line.`,
             NotificationType.PLANNED_SCHEDULE,
-            { scheduleId: id, feederId: fId }
+            { scheduleId: id, feederId: fId },
+            `sched_pub:${id}:${cm.customerId}`
           );
           notifiedUsers++;
         }

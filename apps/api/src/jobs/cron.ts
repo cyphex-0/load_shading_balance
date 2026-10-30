@@ -13,15 +13,7 @@ export const startBackgroundJobs = () => {
   // Job 1: sendNotificationsJob (Every 30 seconds)
   const task1 = cron.schedule('*/30 * * * * *', async () => {
     try {
-      const pendingLogs = Array.from(store.notificationDeliveryLogs.values()).filter(
-        (l) => l.status === DeliveryStatus.QUEUED && l.attempts < 3
-      );
-
-      for (const log of pendingLogs) {
-        const notif = log.notificationId ? store.notifications.get(log.notificationId) : null;
-        const msg = notif?.message || 'Load Shedding System Notification';
-        await notificationService.dispatchSmsLog(log.id, msg);
-      }
+      await notificationService.dispatchPendingNotifications();
     } catch (err: any) {
       logger.error('Error in sendNotificationsJob:', err?.message);
     }
