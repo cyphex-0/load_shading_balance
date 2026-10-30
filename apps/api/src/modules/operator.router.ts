@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   generateScheduleDraftSchema,
+  updateScheduleMetadataSchema,
   adjustSlotSchema,
   assignTechnicianSchema,
   activeOutagesQuerySchema,
@@ -71,6 +72,17 @@ operatorRouter.get('/operator/schedules/:id', opAuth, async (req, res, next) => 
   }
 });
 
+// Endpoint 31b: PATCH /api/v1/operator/schedules/:id (Draft metadata update)
+operatorRouter.patch('/operator/schedules/:id', opAuth, async (req: any, res: any, next: any) => {
+  try {
+    const data = updateScheduleMetadataSchema.parse(req.body);
+    const updated = await schedulerService.updateScheduleMetadata(req.params.id, data);
+    return successResponse(res, updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Endpoint 32: PATCH /api/operator/schedules/:id/slots/:slotId
 operatorRouter.patch('/operator/schedules/:id/slots/:slotId', opAuth, async (req, res, next) => {
   try {
@@ -85,7 +97,8 @@ operatorRouter.patch('/operator/schedules/:id/slots/:slotId', opAuth, async (req
 // Endpoint 33: POST /api/operator/schedules/:id/publish
 operatorRouter.post('/operator/schedules/:id/publish', opAuth, async (req, res, next) => {
   try {
-    const published = await schedulerService.publishSchedule(req.params.id);
+    const idempotencyKey = (req.headers['idempotency-key'] || req.headers['x-idempotency-key']) as string | undefined;
+    const published = await schedulerService.publishSchedule(req.params.id, idempotencyKey);
     return successResponse(res, published);
   } catch (err) {
     next(err);

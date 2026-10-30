@@ -3,12 +3,15 @@ import {
   ScheduleStatus,
   zoneListQuerySchema,
   publicFeedersQuerySchema,
-  publicScheduleQuerySchema
+  publicScheduleQuerySchema,
+  feederScheduleQuerySchema
 } from '@load-shedding/shared';
 import { store } from '../db/store';
+import { authenticateUser } from '../middleware/auth';
 import { successResponse, paginatedResponse } from '../utils/response';
 import { cacheService } from '../services/cache.service';
 import { gridService } from '../services/grid.service';
+import { schedulerService } from '../services/scheduler.service';
 
 export const gridRouter = Router();
 
@@ -302,4 +305,20 @@ gridRouter.get('/grid/status', async (req, res) => {
 
   await cacheService.set(cacheKey, summary, 30);
   return successResponse(res, summary);
+});
+
+// Endpoint 35: GET /api/v1/schedules/feeders/:feederId (Authorized Feeder Schedule Lookup)
+gridRouter.get('/schedules/feeders/:feederId', authenticateUser, async (req: any, res: any, next: any) => {
+  try {
+    const query = feederScheduleQuerySchema.parse(req.query);
+    const user = {
+      id: req.user.sub,
+      role: req.user.role,
+      assignedZoneId: req.user.zoneId
+    };
+    const schedules = await schedulerService.getFeederSchedules(req.params.feederId, user, query);
+    return successResponse(res, schedules);
+  } catch (err) {
+    next(err);
+  }
 });
