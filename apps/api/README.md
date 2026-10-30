@@ -4,6 +4,16 @@ The backend service for the **Load Shedding & Power Outage Management System**, 
 
 ---
 
+## 🌐 Live Production Deployment (Render)
+
+* **Production URL:** `https://load-shading-balance.onrender.com`
+* **Status:** Verified `HEALTHY` (PostgreSQL Database: `UP`, Upstash Redis: `UP`)
+* **Liveness Probe:** `https://load-shading-balance.onrender.com/api/v1/health/live`
+* **Readiness / Health:** `https://load-shading-balance.onrender.com/api/health`
+* **Socket.io Live Endpoint:** `wss://load-shading-balance.onrender.com/socket.io`
+
+---
+
 ## 1. Quick Start
 
 ### Prerequisites

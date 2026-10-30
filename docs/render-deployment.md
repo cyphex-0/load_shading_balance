@@ -7,7 +7,9 @@ This guide provides step-by-step instructions for deploying the Express + TypeSc
 
 ## 1. Quick Overview & Architecture
 
-* **Service Type:** Web Service (Node.js)
+* **Live Production URL:** `https://load-shading-balance.onrender.com`
+* **Service Status:** Active & `HEALTHY` (Database: `UP`, Redis: `UP`)
+* **Service Type:** Web Service (Node.js 20 LTS)
 * **Root Directory:** `.` (Repository root, to leverage npm workspaces)
 * **Build Command:** `npm install && npm run build:backend`
 * **Start Command:** `npm run start:backend`
