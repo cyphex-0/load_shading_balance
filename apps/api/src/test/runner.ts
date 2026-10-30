@@ -2296,6 +2296,216 @@ const runSuite = async () => {
       'Customer Schedule View: Customer query to /api/v1/schedules/feeders/:feederId strictly omits draft schedules'
     );
 
+    // ============================================================================
+    // Phase 15: Customer Read Journey, Multi-Meter Aggregation, IDOR, & Cache Invalidation
+    // ============================================================================
+    logger.info('[INFO] Testing Phase 15: Customer Read Journey, Multi-Meter Aggregation, IDOR, & Cache Invalidation');
+
+    // 1. Admin creates a second meter on Mirpur Feeder 1 for Customer A
+    const adminCreateMeterA2Res = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/meters',
+      {
+        meterNumber: 'MTR-MIR-105',
+        feederId: 'fdr_mir_1',
+        address: 'Mirpur Commercial Complex 5A'
+      },
+      adminToken
+    );
+    assert(
+      adminCreateMeterA2Res.status === 201,
+      'Admin registers secondary physical meter MTR-MIR-105 on feeder fdr_mir_1'
+    );
+    const meterA2Id = adminCreateMeterA2Res.body.data.id;
+
+    // 2. Customer A links the second meter
+    const custLinkA2Res = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/customers/me/meters',
+      {
+        meterNumber: 'MTR-MIR-105',
+        nickname: 'Mirpur Branch Office',
+        isPrimary: false
+      },
+      customerToken
+    );
+    assert(
+      custLinkA2Res.status === 201 &&
+      custLinkA2Res.body.data.isPrimary === false &&
+      custLinkA2Res.body.data.meterNumber === 'MTR-MIR-105',
+      'Customer A links second meter MTR-MIR-105 with isPrimary=false'
+    );
+
+    // 3. Customer Dashboard aggregates all linked meters and telemetry
+    const custDashboardRes1 = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/dashboard',
+      undefined,
+      customerToken
+    );
+    assert(
+      custDashboardRes1.status === 200 &&
+      custDashboardRes1.body.success === true &&
+      Array.isArray(custDashboardRes1.body.data.meters) &&
+      custDashboardRes1.body.data.meters.length >= 2 &&
+      custDashboardRes1.body.data.meters.some((m: any) => m.meterNumber === 'MTR-DHN-101') &&
+      custDashboardRes1.body.data.meters.some((m: any) => m.meterNumber === 'MTR-MIR-105') &&
+      Array.isArray(custDashboardRes1.body.data.upcomingSchedules) &&
+      custDashboardRes1.body.data.notifications &&
+      typeof custDashboardRes1.body.data.notifications.unreadCount === 'number' &&
+      custDashboardRes1.body.data.cached === false,
+      'GET /api/v1/customers/me/dashboard aggregates multi-meter status, upcoming schedules, and notifications (cache miss)'
+    );
+
+    // 4. Cache-aside test: Immediate repeat of dashboard hits Redis cache
+    const custDashboardRes2 = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/dashboard',
+      undefined,
+      customerToken
+    );
+    assert(
+      custDashboardRes2.status === 200 &&
+      custDashboardRes2.body.data.cached === true &&
+      custDashboardRes2.body.data.meters.length === custDashboardRes1.body.data.meters.length,
+      'GET /api/v1/customers/me/dashboard serves response from Redis cache on repeat (cached=true)'
+    );
+
+    // 5. Multi-Meter Status without meterId returns all linked meters
+    const multiMeterStatusRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/status',
+      undefined,
+      customerToken
+    );
+    assert(
+      multiMeterStatusRes.status === 200 &&
+      multiMeterStatusRes.body.data.hasMeter === true &&
+      Array.isArray(multiMeterStatusRes.body.data.meters) &&
+      multiMeterStatusRes.body.data.meters.length >= 2,
+      'GET /api/v1/customers/me/status without meterId returns status array for all linked meters'
+    );
+
+    // 6. Single Meter Status for owned meter returns specific meter status
+    const singleMeterStatusRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/status?meterId=' + meterA2Id,
+      undefined,
+      customerToken
+    );
+    assert(
+      singleMeterStatusRes.status === 200 &&
+      singleMeterStatusRes.body.data.meterId === meterA2Id &&
+      singleMeterStatusRes.body.data.meterNumber === 'MTR-MIR-105' &&
+      singleMeterStatusRes.body.data.feederId === 'fdr_mir_1',
+      'GET /api/v1/customers/me/status?meterId={ownedId} returns single meter status'
+    );
+
+    // 7. Object-level IDOR Protection: Querying foreign meter is strictly rejected
+    const foreignMeterStatusRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/status?meterId=mtr_dhn_102',
+      undefined,
+      customerToken
+    );
+    assert(
+      foreignMeterStatusRes.status === 404 &&
+      foreignMeterStatusRes.body.error.code === 'METER_NOT_FOUND',
+      'IDOR Protection: GET /api/v1/customers/me/status?meterId={foreignId} strictly rejected with 404 METER_NOT_FOUND'
+    );
+
+    // 8. Customer upcoming schedule query returns published schedules and caches result
+    const custScheduleRes1 = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/schedule',
+      undefined,
+      customerToken
+    );
+    assert(
+      custScheduleRes1.status === 200 &&
+      custScheduleRes1.body.success === true &&
+      Array.isArray(custScheduleRes1.body.data.schedules) &&
+      custScheduleRes1.body.data.cached === false,
+      'GET /api/v1/customers/me/schedule returns published slots across owned meters (cache miss)'
+    );
+
+    // 9. Cache-aside test: Repeat schedule query returns cached=true
+    const custScheduleRes2 = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/schedule',
+      undefined,
+      customerToken
+    );
+    assert(
+      custScheduleRes2.status === 200 &&
+      custScheduleRes2.body.data.cached === true,
+      'GET /api/v1/customers/me/schedule serves cached response on repeat query (cached=true)'
+    );
+
+    // 10. Schedule IDOR Protection: Querying schedule with foreign meterId is strictly rejected
+    const foreignScheduleRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/schedule?meterId=mtr_dhn_102',
+      undefined,
+      customerToken
+    );
+    assert(
+      foreignScheduleRes.status === 404 &&
+      foreignScheduleRes.body.error.code === 'METER_NOT_FOUND',
+      'IDOR Protection: GET /api/v1/customers/me/schedule?meterId={foreignId} strictly rejected with 404 METER_NOT_FOUND'
+    );
+
+    // 11. Cache Invalidation Hook: Generating & publishing a new schedule purges customer cache
+    const newDraftRes = await request(
+      serverUrl,
+      'POST',
+      '/api/operator/schedules/draft',
+      {
+        planningDate: '2026-09-28',
+        deficitMW: 20,
+        startTime: '16:00',
+        endTime: '17:00',
+        slotDurationMinutes: 60
+      },
+      opToken
+    );
+    assert(newDraftRes.status === 201, 'Operator creates new draft schedule for cache invalidation test');
+    const newSchedId = newDraftRes.body.data.id;
+
+    // Publish the schedule
+    const pubRes = await request(
+      serverUrl,
+      'POST',
+      '/api/operator/schedules/' + newSchedId + '/publish',
+      {},
+      opToken
+    );
+    assert(pubRes.status === 200, 'Operator publishes schedule, triggering cache invalidation hooks');
+
+    // 12. Verification of Cache Invalidation: Customer Dashboard is now a fresh miss (cached=false)
+    const postPubDashboardRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/customers/me/dashboard',
+      undefined,
+      customerToken
+    );
+    assert(
+      postPubDashboardRes.status === 200 &&
+      postPubDashboardRes.body.data.cached === false,
+      'Cache Invalidation: Publishing schedule invalidates customer dashboard cache (cached=false on next fetch)'
+    );
+
   } catch (err: any) {
     logger.error('Test execution error:', err);
     failed++;
