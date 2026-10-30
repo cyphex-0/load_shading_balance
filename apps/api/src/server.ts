@@ -15,9 +15,9 @@ initSocketServer(server);
 // Start Background Cron Jobs
 startBackgroundJobs();
 
-server.listen(config.port, () => {
-  logger.info(`⚡ Load Shedding & Power Outage API server listening on http://localhost:${config.port}`);
-  logger.info(`📡 Socket.io server running at ws://localhost:${config.port}/socket.io`);
+server.listen(config.port, '0.0.0.0', () => {
+  logger.info(`⚡ Load Shedding & Power Outage API server listening on http://0.0.0.0:${config.port}`);
+  logger.info(`📡 Socket.io server running at ws://0.0.0.0:${config.port}/socket.io`);
   logger.info(`🌍 Environment: ${config.nodeEnv} | Timezone: ${config.operationalTimeZone}`);
 });
 

@@ -2,6 +2,9 @@
   "name": "load-shedding-management-system",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -11,8 +14,13 @@
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspaces",
-    "build:api": "npm run build --workspace=apps/api",
+    "build:backend": "npm run build --workspace=packages/shared && npm run prisma:generate --workspace=apps/api && npm run build --workspace=apps/api",
+    "build:api": "npm run build:backend",
     "build:web": "npm run build --workspace=apps/web",
+    "start:backend": "node apps/api/dist/server.js",
+    "start:api": "npm run start:backend",
+    "db:push": "npm run prisma:push --workspace=apps/api",
+    "db:seed": "npm run prisma:seed --workspace=apps/api",
     "typecheck": "npm run typecheck --workspace=apps/api",
     "test": "npm run test --workspace=apps/api",
     "lint": "npm run lint --workspaces"

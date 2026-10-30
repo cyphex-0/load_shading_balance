@@ -8,9 +8,21 @@ import { logger } from '../utils/logger';
 let io: SocketIOServer | null = null;
 
 export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
+  const configuredOrigins = (config.frontendUrl || '')
+    .split(',')
+    .map((url) => url.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const allowedOrigins = Array.from(
+    new Set([
+      ...configuredOrigins,
+      'http://localhost:3000',
+      'http://127.0.0.1:3000'
+    ])
+  );
+
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: [config.frontendUrl, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+      origin: allowedOrigins,
       credentials: true
     }
   });
