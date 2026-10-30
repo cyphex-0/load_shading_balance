@@ -4,6 +4,7 @@ import {
   updateScheduleMetadataSchema,
   adjustSlotSchema,
   assignTechnicianSchema,
+  cancelTicketSchema,
   activeOutagesQuerySchema,
   UserRole,
   FeederStatus,
@@ -17,6 +18,7 @@ import { schedulerService } from '../services/scheduler.service';
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from '../services/notification.service';
 import { gridService } from '../services/grid.service';
+import { outageService } from '../services/outage.service';
 
 export const operatorRouter = Router();
 
@@ -338,84 +340,60 @@ operatorRouter.get('/operators/outage-reports', opAuth, (req, res) => {
 });
 
 // Endpoint 37: POST /api/operators/outage-reports/:id/assign
-operatorRouter.post('/operators/outage-reports/:id/assign', opAuth, (req: any, res, next) => {
+operatorRouter.post('/operators/outage-reports/:id/assign', opAuth, async (req: any, res, next) => {
   try {
     const { technicianId } = assignTechnicianSchema.parse(req.body);
-    const ticket = store.outageTickets.get(req.params.id);
-    if (!ticket) throw new AppError('Outage ticket not found', 404, 'TICKET_NOT_FOUND');
-
-    const tech = store.users.get(technicianId);
-    if (!tech || tech.role !== UserRole.TECHNICIAN || tech.status !== 'ACTIVE') {
-      throw new AppError('Technician not found or inactive', 400, 'INVALID_TECHNICIAN');
-    }
-
-    const now = new Date().toISOString();
-    const asgnId = `tech_asgn_${Date.now()}`;
-    const newAssignment: TechnicianAssignmentRecord = {
-      id: asgnId,
-      ticketId: ticket.id,
+    const result = await outageService.assignTechnician(
+      req.params.id,
       technicianId,
-      assignedById: req.user.sub,
-      status: AssignmentStatus.PENDING,
-      assignedAt: now
-    };
-    store.technicianAssignments.set(asgnId, newAssignment);
-
-    // Update ticket status to ASSIGNED
-    ticket.status = OutageStatus.ASSIGNED;
-    ticket.updatedAt = now;
-
-    // Log history
-    const histId = `hist_${Date.now()}`;
-    store.outageStatusHistories.set(histId, {
-      id: histId,
-      ticketId: ticket.id,
-      previousStatus: OutageStatus.REPORTED,
-      newStatus: OutageStatus.ASSIGNED,
-      changedById: req.user.sub,
-      notes: `Assigned to technician ${tech.name}`,
-      createdAt: now
-    });
-
-    const feeder = store.feeders.get(ticket.feederId);
-    const meter = store.meters.get(ticket.meterId);
-
-    // Emit Socket events
-    socketEmitter.emitTicketAssigned({
-      ticketId: ticket.id,
-      technicianId: tech.id,
-      feederName: feeder?.name || 'Feeder',
-      address: meter?.address || 'Site',
-      assignedAt: now
-    });
-
-    socketEmitter.emitTicketStatusChanged({
-      ticketId: ticket.id,
-      customerId: ticket.customerId,
-      status: OutageStatus.ASSIGNED,
-      updatedAt: now
-    });
-
-    // Notify technician via SMS & in-app
-    notificationService.createNotification(
-      tech.id,
-      'New Outage Fault Assigned',
-      `You have been dispatched to ${feeder?.name || 'an outage'} (${ticket.ticketNumber}). Tap to accept and navigate.`,
-      'SYSTEM_ALERT' as any,
-      { ticketId: ticket.id }
+      req.user.sub
     );
-
+    const tech = store.users.get(technicianId);
     return successResponse(res, {
       success: true,
-      ticketId: ticket.id,
+      ticketId: result.id,
       technician: {
-        id: tech.id,
-        name: tech.name,
-        phone: tech.phone
+        id: tech?.id,
+        name: tech?.name,
+        phone: tech?.phone
       },
-      status: ticket.status
+      status: result.status
     });
   } catch (err) {
     next(err);
   }
 });
+
+// Endpoint: POST /api/operators/outage-reports/:id/auto-assign
+operatorRouter.post(
+  ['/operators/outage-reports/:id/auto-assign', '/v1/operator/outages/:id/auto-assign'],
+  opAuth,
+  async (req: any, res, next) => {
+    try {
+      const result = await outageService.autoAssignTechnician(req.params.id, req.user.sub);
+      return successResponse(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Endpoint: POST /api/operators/outage-reports/:id/cancel
+operatorRouter.post(
+  ['/operators/outage-reports/:id/cancel', '/v1/operator/outages/:id/cancel'],
+  opAuth,
+  async (req: any, res, next) => {
+    try {
+      const { reason } = cancelTicketSchema.parse(req.body);
+      const result = await outageService.transitionTicket(
+        req.params.id,
+        OutageStatus.CANCELLED,
+        req.user.sub,
+        reason
+      );
+      return successResponse(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);

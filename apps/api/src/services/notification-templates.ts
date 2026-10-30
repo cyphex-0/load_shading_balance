@@ -46,6 +46,13 @@ export class NotificationTemplates {
     };
   }
 
+  static outageCancelled(ticketNumber: string, reason: string): NotificationTemplatePayload {
+    return {
+      title: 'Outage Report Cancelled',
+      message: `Your outage report (${ticketNumber}) has been cancelled. Reason: ${reason}`
+    };
+  }
+
   static plannedConflictExplanation(endTime: string): NotificationTemplatePayload {
     return {
       title: 'Scheduled Load Shedding Notice',
