@@ -4,7 +4,10 @@ import {
   NotificationType,
   SocketEvent,
   CandidateFeederInput,
-  FeederUsageHistoryInput
+  FeederUsageHistoryInput,
+  ScheduleGenerationRunRecord,
+  FeederScheduleSlotDto,
+  UserRole
 } from '@load-shedding/shared';
 import {
   store,
@@ -16,7 +19,7 @@ import {
 import { cacheService } from './cache.service';
 import { notificationService } from './notification.service';
 import { socketEmitter } from '../sockets/socket.server';
-import { AppError } from '../utils/response';
+import { AppError, NotFoundError, ForbiddenError } from '../utils/response';
 import { logger } from '../utils/logger';
 import { computeFairRotationSchedule } from './scheduler/fair-rotation.engine';
 
@@ -30,8 +33,14 @@ export interface GenerateScheduleParams {
   createdById: string;
 }
 
+export interface FeederScheduleQueryOptions {
+  startDate?: string;
+  endDate?: string;
+  status?: ScheduleStatus;
+}
+
 export class SchedulerService {
-  async generateDraft(params: GenerateScheduleParams): Promise<ScheduleRecord & { slots: any[] }> {
+  async generateDraft(params: GenerateScheduleParams): Promise<ScheduleRecord & { slots: any[]; diagnostics: ScheduleGenerationRunRecord }> {
     const { planningDate, deficitMW, startTime, endTime, slotDurationMinutes, zoneIds, createdById } = params;
 
     // 1. Gather all active candidate feeders from store
@@ -167,15 +176,42 @@ export class SchedulerService {
       });
     }
 
+    // 6. Persist ScheduleGenerationRun audit record
+    const runRecord: ScheduleGenerationRunRecord = {
+      id: `sgr_${scheduleId}`,
+      scheduleId,
+      operatorId: createdById,
+      planningDate,
+      algorithmVersion: 'v1.0.0-fair-rotation',
+      targetDeficitMW: deficitMW,
+      selectedMW: plan.overallActualMWh,
+      shortfallMW: plan.slots.reduce((sum, s) => sum + s.shortfallMW, 0),
+      totalSlots: plan.totalSlots,
+      eligibleFeedersCount: plan.eligibleFeedersCount,
+      criticalExcludedCount: plan.criticalExcludedCount,
+      sameDayExcludedCount: plan.sameDayExcludedCount,
+      diagnostics: {
+        totalDurationMinutes: plan.totalDurationMinutes,
+        overallTargetMWh: plan.overallTargetMWh,
+        overallActualMWh: plan.overallActualMWh,
+        overallShortfallMWh: plan.overallShortfallMWh
+      },
+      createdAt: new Date().toISOString()
+    };
+    store.scheduleGenerationRuns.set(runRecord.id, runRecord);
+
     return {
       ...schedule,
-      slots: createdSlots
+      slots: createdSlots,
+      diagnostics: runRecord
     };
   }
 
   async getScheduleDetails(id: string): Promise<any> {
     const schedule = store.schedules.get(id);
-    if (!schedule) throw new AppError('Schedule not found', 404, 'SCHEDULE_NOT_FOUND');
+    if (!schedule) throw new NotFoundError('Schedule not found');
+
+    const generationRun = store.scheduleGenerationRuns.get(`sgr_${id}`);
 
     const slots = Array.from(store.scheduleSlots.values())
       .filter((s) => s.scheduleId === id)
@@ -204,32 +240,95 @@ export class SchedulerService {
 
     return {
       ...schedule,
-      slots
+      slots,
+      generationRun: generationRun || null
     };
+  }
+
+  async updateScheduleMetadata(scheduleId: string, data: { notes?: string }): Promise<any> {
+    const schedule = store.schedules.get(scheduleId);
+    if (!schedule) throw new NotFoundError('Schedule not found');
+
+    if (schedule.status !== ScheduleStatus.DRAFT) {
+      throw new AppError('Only draft schedules can have metadata updated', 409, 'INVALID_STATE_TRANSITION');
+    }
+
+    if (data.notes !== undefined) {
+      schedule.notes = data.notes;
+    }
+    schedule.updatedAt = new Date().toISOString();
+
+    return this.getScheduleDetails(scheduleId);
   }
 
   async adjustSlot(scheduleId: string, slotId: string, feederIds: string[]): Promise<any> {
     const schedule = store.schedules.get(scheduleId);
-    if (!schedule) throw new AppError('Schedule not found', 404, 'SCHEDULE_NOT_FOUND');
+    if (!schedule) throw new NotFoundError('Schedule not found');
     if (schedule.status !== ScheduleStatus.DRAFT) {
-      throw new AppError('Only draft schedules can be adjusted', 400, 'SCHEDULE_NOT_DRAFT');
+      throw new AppError('Only draft schedules can be adjusted', 409, 'INVALID_STATE_TRANSITION');
     }
 
     const slot = store.scheduleSlots.get(slotId);
     if (!slot || slot.scheduleId !== scheduleId) {
-      throw new AppError('Slot not found in schedule', 404, 'SLOT_NOT_FOUND');
+      throw new NotFoundError('Slot not found in schedule');
     }
 
-    // Validate that none of the feederIds are critical
+    // Grid Law 1: Critical Feeder Immunity & Active Status Validation
     for (const fId of feederIds) {
       const feeder = store.feeders.get(fId);
-      if (!feeder) throw new AppError(`Feeder ${fId} not found`, 404, 'FEEDER_NOT_FOUND');
+      if (!feeder || feeder.deletedAt) throw new NotFoundError(`Feeder ${fId} not found`);
       if (feeder.isCritical) {
         throw new AppError(
           `Feeder ${feeder.name} is marked as CRITICAL and cannot be assigned to load shedding`,
           400,
           'CRITICAL_FEEDER_PROTECTED'
         );
+      }
+      if (feeder.status === FeederStatus.UNEXPECTED_FAULT) {
+        throw new AppError(`Feeder ${feeder.name} is currently experiencing an unexpected fault`, 400, 'FEEDER_FAULT');
+      }
+    }
+
+    // Grid Law 2: Same-Day Single-Cut Rule Validation
+    // A feeder cannot be assigned to another slot in the same schedule or another published schedule on that day
+    for (const otherSlot of store.scheduleSlots.values()) {
+      if (otherSlot.scheduleId === scheduleId && otherSlot.id !== slotId) {
+        const otherAssignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+          (a) => a.slotId === otherSlot.id
+        );
+        for (const fId of feederIds) {
+          if (otherAssignments.some((a) => a.feederId === fId)) {
+            const feeder = store.feeders.get(fId);
+            throw new AppError(
+              `Feeder ${feeder?.name || fId} is already scheduled in another slot on this day`,
+              400,
+              'FEEDER_ALREADY_COMMITTED'
+            );
+          }
+        }
+      }
+    }
+
+    // Check published schedules on the same planning date
+    for (const sched of store.schedules.values()) {
+      if (sched.id !== scheduleId && sched.planningDate === schedule.planningDate && sched.status === ScheduleStatus.PUBLISHED) {
+        for (const s of store.scheduleSlots.values()) {
+          if (s.scheduleId === sched.id) {
+            const pubAssignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+              (a) => a.slotId === s.id
+            );
+            for (const fId of feederIds) {
+              if (pubAssignments.some((a) => a.feederId === fId)) {
+                const feeder = store.feeders.get(fId);
+                throw new AppError(
+                  `Feeder ${feeder?.name || fId} is already scheduled in a published schedule for this date`,
+                  400,
+                  'FEEDER_ALREADY_COMMITTED'
+                );
+              }
+            }
+          }
+        }
       }
     }
 
@@ -261,20 +360,44 @@ export class SchedulerService {
     return this.getScheduleDetails(scheduleId);
   }
 
-  async publishSchedule(id: string): Promise<any> {
-    const schedule = store.schedules.get(id);
-    if (!schedule) throw new AppError('Schedule not found', 404, 'SCHEDULE_NOT_FOUND');
-    if (schedule.status !== ScheduleStatus.DRAFT) {
-      throw new AppError('Only draft schedules can be published', 400, 'SCHEDULE_NOT_DRAFT');
+  async publishSchedule(id: string, idempotencyKey?: string): Promise<any> {
+    // Check idempotency cache if key was provided
+    if (idempotencyKey) {
+      const existing = store.idempotencyKeys.get(idempotencyKey);
+      if (existing) {
+        logger.info(`Returning idempotent cached response for publish schedule ${id}`);
+        return existing.result;
+      }
     }
 
+    const schedule = store.schedules.get(id);
+    if (!schedule) throw new NotFoundError('Schedule not found');
+    if (schedule.status !== ScheduleStatus.DRAFT) {
+      throw new AppError('Only draft schedules can be published', 409, 'INVALID_STATE_TRANSITION');
+    }
+
+    const details = await this.getScheduleDetails(id);
+
+    // Re-validate critical feeder immunity at publish time
+    for (const slot of details.slots) {
+      for (const f of slot.feeders) {
+        const feeder = store.feeders.get(f.feederId);
+        if (!feeder || feeder.deletedAt || feeder.isCritical) {
+          throw new AppError(
+            `Schedule contains invalid or critical feeder ${feeder?.name || f.feederId} and cannot be published`,
+            409,
+            'INVALID_SCHEDULE_STATE'
+          );
+        }
+      }
+    }
+
+    // Commit database state transition
     schedule.status = ScheduleStatus.PUBLISHED;
     schedule.publishedAt = new Date().toISOString();
     schedule.updatedAt = new Date().toISOString();
 
-    const details = await this.getScheduleDetails(id);
-
-    // Warm Redis cache for all affected feeders and notify customers
+    // Post-commit side effects: Redis warm, notification intent, socket broadcast
     const affectedFeederIds = new Set<string>();
     for (const slot of details.slots) {
       for (const f of slot.feeders) {
@@ -316,18 +439,30 @@ export class SchedulerService {
       affectedFeedersCount: affectedFeederIds.size
     });
 
-    return {
-      schedule: details,
+    const result = {
+      schedule: await this.getScheduleDetails(id),
       affectedFeedersCount: affectedFeederIds.size,
       customersNotified: notifiedUsers
     };
+
+    if (idempotencyKey) {
+      store.idempotencyKeys.set(idempotencyKey, {
+        result,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    return result;
   }
 
   async cancelSchedule(id: string): Promise<any> {
     const schedule = store.schedules.get(id);
-    if (!schedule) throw new AppError('Schedule not found', 404, 'SCHEDULE_NOT_FOUND');
+    if (!schedule) throw new NotFoundError('Schedule not found');
     if (schedule.status === ScheduleStatus.CANCELLED) {
-      throw new AppError('Schedule is already cancelled', 400, 'SCHEDULE_ALREADY_CANCELLED');
+      throw new AppError('Schedule is already cancelled', 409, 'INVALID_STATE_TRANSITION');
+    }
+    if ((schedule.status as any) === 'COMPLETED') {
+      throw new AppError('Completed schedules cannot be cancelled', 409, 'INVALID_STATE_TRANSITION');
     }
 
     schedule.status = ScheduleStatus.CANCELLED;
@@ -341,7 +476,80 @@ export class SchedulerService {
 
     return schedule;
   }
+
+  async getFeederSchedules(
+    feederId: string,
+    user: { id: string; role: UserRole; assignedZoneId?: string | null },
+    query: FeederScheduleQueryOptions = {}
+  ): Promise<FeederScheduleSlotDto[]> {
+    const feeder = store.feeders.get(feederId);
+    if (!feeder || feeder.deletedAt) {
+      throw new NotFoundError('Feeder not found');
+    }
+
+    // Check Zone Manager scope
+    const sub = store.substations.get(feeder.substationId);
+    const feederZoneId = sub ? sub.zoneId : null;
+
+    if (user.role === UserRole.ZONE_MANAGER) {
+      if (!user.assignedZoneId || user.assignedZoneId !== feederZoneId) {
+        throw new ForbiddenError('Forbidden: You do not have access to feeders outside your assigned zone');
+      }
+    }
+
+    // Find all slots where this feeder is assigned
+    const assignments = Array.from(store.scheduleFeederAssignments.values()).filter(
+      (a) => a.feederId === feederId
+    );
+
+    const results: FeederScheduleSlotDto[] = [];
+
+    for (const asgn of assignments) {
+      const slot = store.scheduleSlots.get(asgn.slotId);
+      if (!slot) continue;
+      const sched = store.schedules.get(slot.scheduleId);
+      if (!sched) continue;
+
+      // Role-based draft visibility:
+      // Customers and general users cannot see DRAFT schedules.
+      if (user.role === UserRole.CUSTOMER && sched.status === ScheduleStatus.DRAFT) {
+        continue;
+      }
+
+      // Query filters
+      if (query.startDate && sched.planningDate < query.startDate) {
+        continue;
+      }
+      if (query.endDate && sched.planningDate > query.endDate) {
+        continue;
+      }
+      if (query.status && sched.status !== query.status) {
+        continue;
+      }
+
+      results.push({
+        scheduleId: sched.id,
+        planningDate: sched.planningDate,
+        scheduleStatus: sched.status,
+        slotId: slot.id,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        targetDeficitMW: slot.targetDeficitMW,
+        actualDeficitMW: slot.actualDeficitMW,
+        feederLoadMW: asgn.loadMW,
+        isPublished: sched.status === ScheduleStatus.PUBLISHED
+      });
+    }
+
+    // Sort descending by planningDate, then startTime
+    results.sort((a, b) => {
+      const dateCmp = b.planningDate.localeCompare(a.planningDate);
+      if (dateCmp !== 0) return dateCmp;
+      return a.startTime.localeCompare(b.startTime);
+    });
+
+    return results;
+  }
 }
 
 export const schedulerService = new SchedulerService();
-

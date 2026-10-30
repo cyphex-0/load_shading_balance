@@ -8,7 +8,8 @@ import {
   AssignmentStatus,
   UpgradeRequestStatus,
   NotificationType,
-  DeliveryStatus
+  DeliveryStatus,
+  ScheduleGenerationRunRecord
 } from '@load-shedding/shared';
 
 export interface UserRecord {
@@ -241,6 +242,8 @@ export class MemoryStore {
   public notificationDeliveryLogs: Map<string, NotificationDeliveryLogRecord> = new Map();
   public auditLogs: Map<string, AuditLogRecord> = new Map();
   public gridMetrics: GridMetricsRecord[] = [];
+  public scheduleGenerationRuns: Map<string, ScheduleGenerationRunRecord> = new Map();
+  public idempotencyKeys: Map<string, { result: any; createdAt: string }> = new Map();
 
   constructor() {
     this.seedInitialData();
@@ -275,6 +278,8 @@ export class MemoryStore {
     this.notificationDeliveryLogs.clear();
     this.auditLogs.clear();
     this.gridMetrics = [];
+    this.scheduleGenerationRuns.clear();
+    this.idempotencyKeys.clear();
 
     this.seedInitialData();
   }
