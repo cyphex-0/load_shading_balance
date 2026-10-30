@@ -13,8 +13,15 @@ import {
   OutageStatus,
   FeederStatus,
   paginationQuerySchema,
-  NotificationType
+  NotificationType,
+  CandidateFeederInput,
+  FeederUsageHistoryInput,
+  FairRotationEngineInput
 } from '@load-shedding/shared';
+import {
+  computeFairRotationSchedule,
+  selectBestFeederSubset
+} from '../services/scheduler/fair-rotation.engine';
 import {
   NotFoundError,
   ConflictError,
@@ -1886,6 +1893,193 @@ const runSuite = async () => {
     store.scheduleFeederAssignments.delete(liveTestAsgnId);
     store.scheduleSlots.delete(liveTestSlotId);
     store.schedules.delete(liveTestSchedId);
+
+    // ============================================================================
+    // Phase 13: Fair-Rotation Scheduling Engine Tests (Test 20: 20a - 20g)
+    // ============================================================================
+
+    // 20a. Law 1: Critical Infrastructure Immunity
+    // Hospital and emergency feeders must NEVER be shed regardless of deficit size
+    const law1Candidates: CandidateFeederInput[] = [
+      { id: 'fdr_hosp_1', name: 'Square Hospital Feeder', code: 'FDR-HOSP-01', capacityMW: 25.0, isCritical: true, substationId: 'sub_dhn_1', substationName: 'Panthapath SS', zoneName: 'Dhanmondi' },
+      { id: 'fdr_res_1', name: 'Residential Block A', code: 'FDR-RES-01', capacityMW: 10.0, isCritical: false, substationId: 'sub_dhn_1', substationName: 'Dhanmondi SS', zoneName: 'Dhanmondi' },
+      { id: 'fdr_res_2', name: 'Residential Block B', code: 'FDR-RES-02', capacityMW: 12.0, isCritical: false, substationId: 'sub_dhn_1', substationName: 'Dhanmondi SS', zoneName: 'Dhanmondi' },
+    ];
+    const law1Plan = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '08:00',
+      endTime: '09:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 50.0, // Deficit exceeds total capacity, hospital must STILL be immune
+      candidateFeeders: law1Candidates
+    });
+    const hospitalAllocated = law1Plan.slots.some(s => s.assignedFeeders.some(f => f.feederId === 'fdr_hosp_1'));
+    assert(
+      law1Plan.criticalExcludedCount === 1 && !hospitalAllocated,
+      'Law 1: Critical Hospital Feeder is strictly immune and excluded even under 50MW catastrophic deficit'
+    );
+
+    // 20b. Law 2: Same-Calendar-Day No-Double-Cut Rule
+    // Feeders cut in Slot 1 cannot be cut again in Slot 2, and feeders in alreadyCommittedFeederIds cannot be cut
+    const law2Candidates: CandidateFeederInput[] = [
+      { id: 'fdr_comm_1', name: 'Already Committed Earlier Today', code: 'FDR-COMM-01', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_pool_1', name: 'Feeder Pool 1', code: 'FDR-POOL-01', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_pool_2', name: 'Feeder Pool 2', code: 'FDR-POOL-02', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_pool_3', name: 'Feeder Pool 3', code: 'FDR-POOL-03', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+    ];
+    const law2Plan = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '08:00',
+      endTime: '10:00', // 2 slots: 08:00-09:00, 09:00-10:00
+      slotDurationMinutes: 60,
+      targetDeficitMW: 10.0,
+      candidateFeeders: law2Candidates,
+      alreadyCommittedFeederIds: ['fdr_comm_1']
+    });
+    assert(law2Plan.sameDayExcludedCount === 1, 'Law 2: Feeders in alreadyCommittedFeederIds are excluded upfront (same-day cut protection)');
+    assert(law2Plan.slots.length === 2, 'Law 2: Discretizes into exactly 2 60-minute slots');
+    const slot1FeederIds = law2Plan.slots[0].assignedFeeders.map(f => f.feederId);
+    const slot2FeederIds = law2Plan.slots[1].assignedFeeders.map(f => f.feederId);
+    const overlapFeederIds = slot1FeederIds.filter(id => slot2FeederIds.includes(id));
+    const committedIncluded = slot1FeederIds.includes('fdr_comm_1') || slot2FeederIds.includes('fdr_comm_1');
+    assert(
+      overlapFeederIds.length === 0 && !committedIncluded,
+      'Law 2: Same-Day Single-Cut Rule prohibits any feeder from being assigned twice across schedule slots or calendar day'
+    );
+
+    // 20c. Law 3: Multi-Factor Equity Scoring & Fairness Rotation
+    // Feeder with 0 cuts vs Feeder with 4 cuts: Feeder with 0 cuts must be prioritized
+    const law3Candidates: CandidateFeederInput[] = [
+      { id: 'fdr_heavy_cut', name: 'Frequently Cut Feeder', code: 'FDR-HEAVY', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_zero_cut', name: 'Uncut Feeder', code: 'FDR-ZERO', capacityMW: 10.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+    ];
+    const law3History: FeederUsageHistoryInput[] = [
+      { feederId: 'fdr_heavy_cut', totalCutsCount: 4, cumulativeShedHours: 8, lastShedAt: '2026-10-31T10:00:00.000Z' },
+      { feederId: 'fdr_zero_cut', totalCutsCount: 0, cumulativeShedHours: 0 }
+    ];
+    const law3Plan = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '10:00',
+      endTime: '11:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 10.0,
+      candidateFeeders: law3Candidates,
+      historicalMetrics: law3History
+    });
+    assert(
+      law3Plan.slots[0].assignedFeeders.length === 1 &&
+      law3Plan.slots[0].assignedFeeders[0].feederId === 'fdr_zero_cut',
+      'Law 3: Feeder with 0 prior cuts is strictly prioritized over feeder with 4 prior cuts via Equity Scoring'
+    );
+
+    // 20d. Determinism Invariant: Permutation Invariance via Lexicographical Tie-Breaker
+    // When equity scores are identical, shuffle order must yield identical assignments
+    const fleetA: CandidateFeederInput[] = [
+      { id: 'fdr_c', name: 'Charlie', code: 'FDR-C', capacityMW: 5.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_a', name: 'Alpha', code: 'FDR-A', capacityMW: 5.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_d', name: 'Delta', code: 'FDR-D', capacityMW: 5.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_b', name: 'Bravo', code: 'FDR-B', capacityMW: 5.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+    ];
+    const fleetB = [fleetA[3], fleetA[0], fleetA[2], fleetA[1]]; // Shuffled order
+    const planA = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '12:00',
+      endTime: '13:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 10.0,
+      candidateFeeders: fleetA
+    });
+    const planB = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '12:00',
+      endTime: '13:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 10.0,
+      candidateFeeders: fleetB
+    });
+    const orderA = planA.slots[0].assignedFeeders.map(f => f.code).join(',');
+    const orderB = planB.slots[0].assignedFeeders.map(f => f.code).join(',');
+    assert(
+      orderA === orderB && orderA === 'FDR-A,FDR-B',
+      'Determinism Invariant: Shuffled candidate permutations produce identical, deterministic schedule (FDR-A, FDR-B)'
+    );
+
+    // 20e. Law 4: Knapsack Capacity Bin-Packing (Optimal Capacity Matching)
+    // Target deficit: 10.0 MW. Candidates: Feeder 1 (4.0 MW), Feeder 2 (6.0 MW), Feeder 3 (11.0 MW).
+    // Knapsack must find exact match 4.0 + 6.0 = 10.0 MW (0.0 MW overage) rather than overshoot.
+    const knapsackCandidates = [
+      { feeder: { id: 'f1', name: 'F1', code: 'F1', capacityMW: 4.0, isCritical: false, substationId: 'sub_1', substationName: 'SS' }, equityScore: 10 },
+      { feeder: { id: 'f2', name: 'F2', code: 'F2', capacityMW: 6.0, isCritical: false, substationId: 'sub_1', substationName: 'SS' }, equityScore: 20 },
+      { feeder: { id: 'f3', name: 'F3', code: 'F3', capacityMW: 11.0, isCritical: false, substationId: 'sub_1', substationName: 'SS' }, equityScore: 30 },
+    ];
+    const knapsackResult = selectBestFeederSubset(knapsackCandidates, 10.0);
+    const knapsackCodes = knapsackResult.map(c => c.feeder.code).sort().join(',');
+    const knapsackTotalMW = knapsackResult.reduce((sum, c) => sum + c.feeder.capacityMW, 0);
+    assert(
+      knapsackTotalMW === 10.0 && knapsackCodes === 'F1,F2',
+      'Law 4 (Knapsack Subroutine): selectBestFeederSubset selects exact match [F1, F2] (10.0 MW) over greedy overshoot'
+    );
+
+    const law4Plan = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '10:00',
+      endTime: '11:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 10.0,
+      candidateFeeders: knapsackCandidates.map(c => c.feeder)
+    });
+    const law4Codes = law4Plan.slots[0].assignedFeeders.map(f => f.code).sort().join(',');
+    assert(
+      law4Plan.slots[0].actualDeficitMW === 10.0 && law4Codes === 'F1,F2',
+      'Law 4: Knapsack bin-packing chooses exact match [F1, F2] (10.0 MW) with zero overage instead of F3 (11.0 MW)'
+    );
+
+    // 20f. Law 5: Infeasibility & Deficit Shortfall Diagnostics
+    // Total candidate capacity: 12.0 MW, target deficit: 20.0 MW
+    const law5Candidates: CandidateFeederInput[] = [
+      { id: 'fdr_short_1', name: 'Shortfall 1', code: 'FDR-S1', capacityMW: 5.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+      { id: 'fdr_short_2', name: 'Shortfall 2', code: 'FDR-S2', capacityMW: 7.0, isCritical: false, substationId: 'sub_1', substationName: 'SS 1' },
+    ];
+    const law5Plan = computeFairRotationSchedule({
+      planningDate: '2026-11-01',
+      startTime: '14:00',
+      endTime: '15:00',
+      slotDurationMinutes: 60,
+      targetDeficitMW: 20.0,
+      candidateFeeders: law5Candidates
+    });
+    assert(
+      law5Plan.slots[0].actualDeficitMW === 12.0 &&
+      law5Plan.slots[0].shortfallMW === 8.0 &&
+      law5Plan.slots[0].isDeficitSatisfied === false &&
+      law5Plan.overallShortfallMWh === 8.0,
+      'Law 5: Infeasibility and deficit shortfall correctly diagnosed (8.0 MW unmet deficit) with full fleet allocation'
+    );
+
+    // 20g. End-to-End Operator Draft Generation with Fair Rotation Engine
+    const fairRotationDraftRes = await request(
+      serverUrl,
+      'POST',
+      '/api/operator/schedules/draft',
+      {
+        planningDate: '2026-11-02',
+        deficitMW: 15.0,
+        startTime: '10:00',
+        endTime: '12:00',
+        slotDurationMinutes: 60
+      },
+      opToken
+    );
+    assert(
+      fairRotationDraftRes.status === 201 &&
+      fairRotationDraftRes.body.success === true &&
+      fairRotationDraftRes.body.data.slots.length === 2,
+      'POST /api/operator/schedules/draft integrates pure Fair-Rotation Engine producing 2 discrete slots'
+    );
+    const draftHospAssigned = fairRotationDraftRes.body.data.slots.some((s: any) =>
+      s.feeders.some((f: any) => f.code === 'FDR-DHN-HOSP')
+    );
+    assert(!draftHospAssigned, 'Draft schedule via Fair-Rotation Engine strictly enforces Law 1 hospital immunity');
 
   } catch (err: any) {
     logger.error('Test execution error:', err);
