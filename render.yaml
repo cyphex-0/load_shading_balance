@@ -9,6 +9,8 @@ services:
     healthCheckPath: /api/v1/health/live
     autoDeploy: true
     envVars:
+      - key: NODE_VERSION
+        value: 20.14.0
       - key: NODE_ENV
         value: production
       - key: PORT
