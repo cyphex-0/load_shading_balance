@@ -109,6 +109,7 @@ export interface ScheduleFeederAssignmentRecord {
   slotId: string;
   feederId: string;
   loadMW: number;
+  feederLoadMW?: number;
   createdAt: string;
 }
 

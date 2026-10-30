@@ -103,7 +103,7 @@ customerRouter.get('/customers/me/dashboard', custAuth, async (req: any, res, ne
                 endTime: slot.endTime,
                 targetDeficitMW: slot.targetDeficitMW,
                 actualDeficitMW: slot.actualDeficitMW,
-                feederLoadMW: a.feederLoadMW,
+                feederLoadMW: a.loadMW,
                 isPublished: true
               });
             }
@@ -336,7 +336,7 @@ const handleGetCustomerSchedule = async (req: any, res: any, next: any) => {
                 status: sched.status,
                 feederId: a.feederId,
                 feederName: feeder?.name || 'Unknown',
-                feederLoadMW: a.feederLoadMW,
+                feederLoadMW: a.loadMW,
                 targetDeficitMW: slot.targetDeficitMW,
                 actualDeficitMW: slot.actualDeficitMW
               });
