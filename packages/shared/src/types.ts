@@ -497,3 +497,38 @@ export interface FeederScheduleSlotDto {
   feederLoadMW: number;
   isPublished: boolean;
 }
+
+// ============================================================================
+// Phase 15: Customer Read Journey and Dashboard Types
+// ============================================================================
+
+export interface CustomerMeterStatusDto {
+  meterId: string;
+  meterNumber: string;
+  address: string;
+  isPrimary: boolean;
+  nickname?: string | null;
+  feederId: string;
+  feederName: string;
+  feederCode: string;
+  substationName: string;
+  zoneName: string;
+  status: FeederStatus;
+  updatedAt: string;
+}
+
+export interface CustomerDashboardDto {
+  customer: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  meters: CustomerMeterStatusDto[];
+  upcomingSchedules: FeederScheduleSlotDto[];
+  activeOutages: any[];
+  notifications: {
+    unreadCount: number;
+    recent: NotificationDto[];
+  };
+}
+

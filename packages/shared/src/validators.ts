@@ -286,3 +286,18 @@ export const feederScheduleQuerySchema = paginationQuerySchema.extend({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'End date must be YYYY-MM-DD').optional(),
   status: z.nativeEnum(ScheduleStatus).optional()
 });
+
+// ============================================================================
+// Phase 15: Customer Dashboard, Multi-Meter Status, and Schedule Queries
+// ============================================================================
+
+export const customerStatusQuerySchema = z.object({
+  meterId: z.string().optional()
+});
+
+export const customerScheduleQuerySchema = paginationQuerySchema.extend({
+  meterId: z.string().optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Start date must be YYYY-MM-DD').optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'End date must be YYYY-MM-DD').optional()
+});
+
