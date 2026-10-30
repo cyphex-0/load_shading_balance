@@ -1,7 +1,7 @@
 import { createApp } from '../app';
 import http from 'http';
 import { logger } from '../utils/logger';
-import { store } from '../db/store';
+import { store, OutageTicketRecord } from '../db/store';
 import { toSafeUser, whereNotDeleted, getUserZoneScope } from '../db/helpers';
 import { isTransientTransactionError } from '../db/transactions';
 import { buildTestUser, buildTestFeeder, createMockClock } from './fixtures';
@@ -34,6 +34,8 @@ import {
 import { requireRole, verifyZoneScope } from '../middleware/auth';
 import { getSimulatedProvider } from '../integrations/sms';
 import { notificationService } from '../services/notification.service';
+import { outageService } from '../services/outage.service';
+
 import { NotificationTemplates } from '../services/notification-templates';
 
 
@@ -2984,6 +2986,413 @@ const runSuite = async () => {
       foreignInspectRes.body.error.code === 'TICKET_NOT_FOUND',
       'Report Inspection IDOR: Non-existent or foreign ticket returns 404 TICKET_NOT_FOUND'
     );
+    // --- Phase 18 Verification Suite: Outage State Machine, Assignment & Dispatch Queue ---
+    logger.info('\n--- Phase 18 Verification Suite: Outage State Machine & Dispatch Queue ---');
+
+    // Setup fresh test fixtures for Phase 18
+    const p18Now = new Date().toISOString();
+    const zoneP18 = {
+      id: 'zone_p18_test',
+      name: 'P18 Test Zone',
+      code: 'ZN-P18',
+      description: 'Phase 18 Testing Zone',
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.zones.set(zoneP18.id, zoneP18);
+
+    const subP18 = {
+      id: 'sub_p18_test',
+      zoneId: zoneP18.id,
+      name: 'P18 Test Substation',
+      code: 'SUB-P18',
+      capacityMW: 50,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.substations.set(subP18.id, subP18);
+
+    const fdrP18 = {
+      id: 'fdr_p18_test',
+      substationId: subP18.id,
+      name: 'P18 Test Feeder',
+      code: 'FDR-P18-01',
+      capacityMW: 20,
+      currentLoadMW: 10,
+      status: FeederStatus.UNEXPECTED_FAULT,
+      isCritical: false,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.feeders.set(fdrP18.id, fdrP18);
+
+    const mtrP18 = {
+      id: 'mtr_p18_test',
+      meterNumber: 'MTR-P18-999',
+      feederId: fdrP18.id,
+      address: 'P18 Test Lane 1, Dhaka',
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.meters.set(mtrP18.id, mtrP18);
+
+    // Setup Technicians
+    const techZoneP18A: any = {
+      id: 'usr_tech_p18_a',
+      name: 'Technician P18 Alpha',
+      email: 'tech.alpha@grid.gov.bd',
+      phone: '+8801720000001',
+      role: UserRole.TECHNICIAN,
+      status: UserStatus.ACTIVE,
+      assignedZoneId: zoneP18.id,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.users.set(techZoneP18A.id, techZoneP18A);
+
+    const techZoneP18B: any = {
+      id: 'usr_tech_p18_b',
+      name: 'Technician P18 Beta',
+      email: 'tech.beta@grid.gov.bd',
+      phone: '+8801720000002',
+      role: UserRole.TECHNICIAN,
+      status: UserStatus.ACTIVE,
+      assignedZoneId: zoneP18.id,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.users.set(techZoneP18B.id, techZoneP18B);
+
+    const techForeignZone: any = {
+      id: 'usr_tech_foreign_zone',
+      name: 'Technician Foreign Zone',
+      email: 'tech.foreign@grid.gov.bd',
+      phone: '+8801720000099',
+      role: UserRole.TECHNICIAN,
+      status: UserStatus.ACTIVE,
+      assignedZoneId: 'zone_foreign_north',
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.users.set(techForeignZone.id, techForeignZone);
+
+    const opZoneP18: any = {
+      id: 'usr_op_p18',
+      name: 'Operator P18',
+      email: 'op.p18@grid.gov.bd',
+      role: UserRole.POWER_OPERATOR,
+      status: UserStatus.ACTIVE,
+      assignedZoneId: zoneP18.id,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.users.set(opZoneP18.id, opZoneP18);
+
+    // Create Test Ticket 1
+    const ticket1: OutageTicketRecord = {
+      id: 'tkt_p18_state_machine',
+      ticketNumber: 'TKT-P18-0001',
+      customerId: 'usr_customer_1',
+      meterId: mtrP18.id,
+      feederId: fdrP18.id,
+      faultType: FaultType.LINE_DOWN,
+      description: 'Overhead cable snapped due to fallen branch',
+      isPlanned: false,
+      status: OutageStatus.REPORTED,
+      reportedAt: p18Now,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.outageTickets.set(ticket1.id, ticket1);
+
+    // 1. Invalid State Transition Rejection (409 INVALID_STATE_TRANSITION)
+    // Direct REPORTED -> RESOLVED is strictly illegal
+    let illegalTransitionBlocked = false;
+    try {
+      await outageService.transitionTicket(ticket1.id, OutageStatus.RESOLVED, 'usr_admin_1');
+    } catch (e: any) {
+      if (e.statusCode === 409 && e.code === 'INVALID_STATE_TRANSITION') {
+        illegalTransitionBlocked = true;
+      }
+    }
+    assert(
+      illegalTransitionBlocked,
+      'State Machine Invariant: Illegal transition REPORTED -> RESOLVED rejected with 409 INVALID_STATE_TRANSITION'
+    );
+
+    // 2. Zone Mismatch Rejection on Assignment (400 ZONE_MISMATCH)
+    let zoneMismatchBlocked = false;
+    try {
+      await outageService.assignTechnician(ticket1.id, techForeignZone.id, opZoneP18.id);
+    } catch (e: any) {
+      if (e.statusCode === 400 && e.code === 'ZONE_MISMATCH') {
+        zoneMismatchBlocked = true;
+      }
+    }
+    assert(
+      zoneMismatchBlocked,
+      'Dispatch Invariant: Non-admin assigning technician from foreign zone rejected with 400 ZONE_MISMATCH'
+    );
+
+    // 3. Invalid Technician Rejection (400 INVALID_TECHNICIAN)
+    let invalidTechBlocked = false;
+    try {
+      await outageService.assignTechnician(ticket1.id, 'usr_customer_1', 'usr_admin_1');
+    } catch (e: any) {
+      if (e.statusCode === 400 && e.code === 'INVALID_TECHNICIAN') {
+        invalidTechBlocked = true;
+      }
+    }
+    assert(
+      invalidTechBlocked,
+      'Dispatch Invariant: Assigning non-technician user rejected with 400 INVALID_TECHNICIAN'
+    );
+
+    // 4. Legal Assignment & Single Active Assignment Invariant
+    const assignResult = await outageService.assignTechnician(
+      ticket1.id,
+      techZoneP18A.id,
+      'usr_admin_1',
+      'Initial dispatch'
+    );
+    assert(
+      assignResult.status === OutageStatus.ASSIGNED &&
+      assignResult.assignedTechnicianId === techZoneP18A.id &&
+      assignResult.assignedAt !== null,
+      'State Machine: Transition REPORTED -> ASSIGNED stamps assignedAt and sets technician'
+    );
+
+    // Reassigning to Technician Beta supersedes Alpha
+    await outageService.assignTechnician(
+      ticket1.id,
+      techZoneP18B.id,
+      'usr_admin_1',
+      'Reassigned to technician Beta'
+    );
+    const alphaAssignment = Array.from(store.technicianAssignments.values()).find(
+      (a) => a.ticketId === ticket1.id && a.technicianId === techZoneP18A.id
+    );
+    const betaAssignment = Array.from(store.technicianAssignments.values()).find(
+      (a) => a.ticketId === ticket1.id && a.technicianId === techZoneP18B.id
+    );
+    assert(
+      alphaAssignment?.status === AssignmentStatus.REASSIGNED &&
+      betaAssignment?.status === AssignmentStatus.PENDING,
+      'Single Active Assignment: Reassignment sets prior technician assignment to REASSIGNED and new to PENDING'
+    );
+
+    // 5. Progression: ASSIGNED -> EN_ROUTE -> REPAIRING -> RESOLVED
+    const enRouteResult = await outageService.transitionTicket(
+      ticket1.id,
+      OutageStatus.EN_ROUTE,
+      techZoneP18B.id,
+      'Departing depot'
+    );
+    assert(
+      enRouteResult.newStatus === OutageStatus.EN_ROUTE &&
+      enRouteResult.ticket.enRouteAt !== null &&
+      betaAssignment?.status === AssignmentStatus.ACCEPTED,
+      'State Machine: ASSIGNED -> EN_ROUTE stamps enRouteAt and marks assignment ACCEPTED'
+    );
+
+    const repairingResult = await outageService.transitionTicket(
+      ticket1.id,
+      OutageStatus.REPAIRING,
+      techZoneP18B.id,
+      'Commencing line replacement'
+    );
+    assert(
+      repairingResult.newStatus === OutageStatus.REPAIRING &&
+      repairingResult.ticket.repairingAt !== null &&
+      betaAssignment?.status === AssignmentStatus.IN_PROGRESS,
+      'State Machine: EN_ROUTE -> REPAIRING stamps repairingAt and marks assignment IN_PROGRESS'
+    );
+
+    const resolvedResult = await outageService.transitionTicket(
+      ticket1.id,
+      OutageStatus.RESOLVED,
+      techZoneP18B.id,
+      'High-voltage cable re-hung and tested with dielectric probe'
+    );
+    assert(
+      resolvedResult.newStatus === OutageStatus.RESOLVED &&
+      resolvedResult.ticket.resolvedAt !== null &&
+      resolvedResult.ticket.resolutionNotes !== null &&
+      betaAssignment?.status === AssignmentStatus.COMPLETED &&
+      store.feeders.get(fdrP18.id)?.status === FeederStatus.ONLINE,
+      'State Machine: REPAIRING -> RESOLVED stamps resolvedAt, completes assignment, and restores feeder to ONLINE'
+    );
+
+    // 6. Terminal State Lock: Attempting transition from RESOLVED
+    let terminalLockBlocked = false;
+    try {
+      await outageService.transitionTicket(ticket1.id, OutageStatus.ASSIGNED, 'usr_admin_1');
+    } catch (e: any) {
+      if (e.statusCode === 409 && e.code === 'INVALID_STATE_TRANSITION') {
+        terminalLockBlocked = true;
+      }
+    }
+    assert(
+      terminalLockBlocked,
+      'Terminal Lock: Attempting to transition from RESOLVED status rejected with 409 INVALID_STATE_TRANSITION'
+    );
+
+    // 7. Cancellation Lifecycle via Route (POST /api/v1/outages/:id/cancel)
+    const ticketCancel: OutageTicketRecord = {
+      id: 'tkt_p18_to_cancel',
+      ticketNumber: 'TKT-P18-0002',
+      customerId: 'usr_customer_1',
+      meterId: mtrP18.id,
+      feederId: fdrP18.id,
+      faultType: FaultType.OTHER,
+      description: 'False alarm by tenant',
+      isPlanned: false,
+      status: OutageStatus.REPORTED,
+      reportedAt: p18Now,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.outageTickets.set(ticketCancel.id, ticketCancel);
+
+    const p18CancelRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/outages/${ticketCancel.id}/cancel`,
+      { reason: 'Customer called back confirming internal breaker tripped' },
+      opToken
+    );
+    assert(
+      p18CancelRes.status === 200 &&
+      p18CancelRes.body.success === true &&
+      p18CancelRes.body.data.newStatus === OutageStatus.CANCELLED &&
+      p18CancelRes.body.data.ticket.cancelledAt !== null,
+      'Cancellation Route: POST /api/v1/outages/:id/cancel transitions ticket to CANCELLED with timestamp'
+    );
+
+    // Subsequent transition on CANCELLED ticket blocked
+    let cancelledLockBlocked = false;
+    try {
+      await outageService.transitionTicket(ticketCancel.id, OutageStatus.EN_ROUTE, 'usr_admin_1');
+    } catch (e: any) {
+      if (e.statusCode === 409 && e.code === 'INVALID_STATE_TRANSITION') {
+        cancelledLockBlocked = true;
+      }
+    }
+    assert(
+      cancelledLockBlocked,
+      'Terminal Lock: Transitioning CANCELLED ticket rejected with 409 INVALID_STATE_TRANSITION'
+    );
+
+    // 8. Deterministic Auto-Assignment Engine
+    // Technician Alpha has 1 active assignment; Technician Beta has 0 active assignments
+    const ticketAuto: OutageTicketRecord = {
+      id: 'tkt_p18_auto_assign',
+      ticketNumber: 'TKT-P18-0003',
+      customerId: 'usr_customer_1',
+      meterId: mtrP18.id,
+      feederId: fdrP18.id,
+      faultType: FaultType.CABLE_FAULT,
+      description: 'Underground conduit smoke observed',
+      isPlanned: false,
+      status: OutageStatus.REPORTED,
+      reportedAt: p18Now,
+      createdAt: p18Now,
+      updatedAt: p18Now
+    };
+    store.outageTickets.set(ticketAuto.id, ticketAuto);
+
+    // Give Tech Alpha an active assignment on another dummy ticket
+    store.technicianAssignments.set('asgn_dummy_alpha', {
+      id: 'asgn_dummy_alpha',
+      ticketId: 'tkt_dummy_alpha',
+      technicianId: techZoneP18A.id,
+      assignedById: 'usr_admin_1',
+      status: AssignmentStatus.IN_PROGRESS,
+      assignedAt: p18Now
+    });
+
+    const autoAssignRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/outages/${ticketAuto.id}/auto-assign`,
+      {},
+      opToken
+    );
+    assert(
+      autoAssignRes.status === 200 &&
+      autoAssignRes.body.success === true &&
+      autoAssignRes.body.data.technicianId === techZoneP18B.id &&
+      store.outageTickets.get(ticketAuto.id)?.status === OutageStatus.ASSIGNED,
+      'Auto-Assignment: Deterministic least-busy engine assigns available Technician Beta (0 active vs Alpha 1 active)'
+    );
+
+    // 9. Canonical Outage Detail & History Retrieval
+    const detailRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/outages/${ticket1.id}`,
+      undefined,
+      opToken
+    );
+    assert(
+      detailRes.status === 200 &&
+      detailRes.body.success === true &&
+      detailRes.body.data.id === ticket1.id &&
+      detailRes.body.data.ticketNumber === ticket1.ticketNumber &&
+      detailRes.body.data.assignedTechnicianName === techZoneP18B.name &&
+      detailRes.body.data.feederName === fdrP18.name &&
+      detailRes.body.data.zoneName === zoneP18.name,
+      'Canonical Detail: GET /api/v1/outages/:id returns fully enriched OutageDetailDto'
+    );
+
+    const historyRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/outages/${ticket1.id}/history`,
+      undefined,
+      opToken
+    );
+    assert(
+      historyRes.status === 200 &&
+      historyRes.body.success === true &&
+      Array.isArray(historyRes.body.data) &&
+      historyRes.body.data.length >= 4 &&
+      historyRes.body.data.some((h: any) => h.newStatus === OutageStatus.ASSIGNED) &&
+      historyRes.body.data.some((h: any) => h.newStatus === OutageStatus.RESOLVED),
+      'Canonical History: GET /api/v1/outages/:id/history returns complete chronological status and actor trail'
+    );
+
+    // 10. Outage Query & Filtering (GET /api/v1/outages)
+    const listRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/outages?status=${OutageStatus.RESOLVED}&page=1&pageSize=10`,
+      undefined,
+      opToken
+    );
+    assert(
+      listRes.status === 200 &&
+      listRes.body.success === true &&
+      Array.isArray(listRes.body.data.items) &&
+      listRes.body.data.items.every((t: any) => t.status === OutageStatus.RESOLVED) &&
+      listRes.body.data.meta !== undefined,
+      'Outage List & Filters: GET /api/v1/outages supports status filtering and PaginatedData response envelope'
+    );
+
+    // 11. Scoped IDOR Protection on Canonical Outages Route
+    // Customer accessing ticket belonging to another customer
+    const idorRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/outages/tkt_dummy_alpha',
+      undefined,
+      customerToken
+    );
+    assert(
+      idorRes.status === 404 && idorRes.body.error.code === 'TICKET_NOT_FOUND',
+      'Canonical Outages IDOR: Customer accessing unowned ticket rejected with 404 TICKET_NOT_FOUND'
+    );
+
 
   } catch (err: any) {
     logger.error('Test execution error:', err);

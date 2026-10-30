@@ -457,13 +457,13 @@ export class OutageService {
     const activeAssignment =
       assignments.find(
         (a) =>
-          a.status === AssignmentStatus.PENDING ||
+          a.status === AssignmentStatus.IN_PROGRESS ||
           a.status === AssignmentStatus.ACCEPTED ||
-          a.status === AssignmentStatus.IN_PROGRESS
+          a.status === AssignmentStatus.PENDING ||
+          a.status === AssignmentStatus.COMPLETED
       ) ||
-      assignments.sort(
-        (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime()
-      )[0];
+      assignments.find((a) => a.status !== AssignmentStatus.REASSIGNED) ||
+      assignments[assignments.length - 1];
 
     const tech = activeAssignment ? store.users.get(activeAssignment.technicianId) : null;
 
