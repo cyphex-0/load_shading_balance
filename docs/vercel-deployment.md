@@ -7,6 +7,7 @@ This guide provides step-by-step instructions for deploying the Next.js 14 front
 
 ## 1. Quick Overview & Architecture
 
+* **Live Production Frontend:** [`https://load-shading-balance.vercel.app`](https://load-shading-balance.vercel.app)
 * **Framework Preset:** `Next.js`
 * **Root Directory:** `apps/web` *(or repository root `.`)*
 * **Build Command:** Automatically handled via `prebuild` (`npm run build --workspace=packages/shared && next build`)
