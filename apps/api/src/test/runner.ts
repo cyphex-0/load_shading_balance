@@ -14,6 +14,7 @@ import {
   FeederStatus,
   paginationQuerySchema,
   NotificationType,
+  DeliveryStatus,
   CandidateFeederInput,
   FeederUsageHistoryInput,
   FairRotationEngineInput
@@ -30,6 +31,10 @@ import {
   ForbiddenError
 } from '../utils/response';
 import { requireRole, verifyZoneScope } from '../middleware/auth';
+import { getSimulatedProvider } from '../integrations/sms';
+import { notificationService } from '../services/notification.service';
+import { NotificationTemplates } from '../services/notification-templates';
+
 
 // Helper to make test HTTP requests
 const request = async (
@@ -656,7 +661,7 @@ const runSuite = async () => {
     store.outageTickets.set(tktTestId, {
       id: tktTestId,
       ticketNumber: 'TKT-2026-TEST15',
-      customerId: 'usr_cust_1',
+      customerId: 'usr_customer_1',
       meterId: 'mtr_dhn_101',
       feederId: 'fdr_dhn_1',
       status: 'ASSIGNED' as any,
@@ -1758,7 +1763,7 @@ const runSuite = async () => {
     store.outageTickets.set(testFaultTicketId, {
       id: testFaultTicketId,
       ticketNumber: 'TKT-PRECEDENCE-001',
-      customerId: 'usr_cust_1',
+      customerId: 'usr_customer_1',
       meterId: 'mtr_mir_201',
       feederId: 'fdr_mir_1',
       description: 'Physical transformer explosion during scheduled cut',
@@ -2504,6 +2509,217 @@ const runSuite = async () => {
       postPubDashboardRes.status === 200 &&
       postPubDashboardRes.body.data.cached === false,
       'Cache Invalidation: Publishing schedule invalidates customer dashboard cache (cached=false on next fetch)'
+    );
+
+    // ============================================================================
+    // Phase 16: Notification Delivery, Twilio Adapter, Retry, and Callback Handling
+    // ============================================================================
+    logger.info('\n--- Phase 16 Verification Suite: Notification Delivery & Webhook ---');
+
+    // 1. Direct SMS Provider Abstraction test (Simulated provider)
+    const simProvider = getSimulatedProvider();
+    const directSmsRes = await simProvider.send({
+      to: '+8801711223344',
+      body: 'Test notification delivery via provider'
+    });
+    assert(
+      directSmsRes.success === true && (directSmsRes.messageId?.startsWith('sim_') ?? false),
+      'SmsProvider: Direct send via SimulatedSmsProvider returns success and valid messageId'
+    );
+
+    // 2. Provider format validation (non-E.164 phone number)
+    const badPhoneRes = await simProvider.send({
+      to: '01711223344', // Missing + prefix
+      body: 'Invalid format message'
+    });
+    assert(
+      badPhoneRes.success === false && badPhoneRes.isPermanentError === true,
+      'SmsProvider: Non-E.164 formatted number returns permanent error'
+    );
+
+    // 3. Centralized Notification Templates
+    const tplPub = NotificationTemplates.schedulePublished('2026-10-01');
+    const tplCancel = NotificationTemplates.scheduleCancelled('2026-10-01');
+    const tplAck = NotificationTemplates.outageAcknowledged('TKT-2026-9999');
+    const tplRest = NotificationTemplates.powerRestored('TKT-2026-9999');
+    assert(
+      tplPub.message.includes('2026-10-01') &&
+      tplCancel.message.includes('cancelled') &&
+      tplAck.message.includes('TKT-2026-9999') &&
+      tplRest.message.includes('restored'),
+      'NotificationTemplates: Centralized templates format expected domain messages'
+    );
+
+    // 4. Logical Event Deduplication
+    const dedupEventKey = 'sched_pub:sched_test_dedup:usr_customer_1';
+    const notif1 = await notificationService.createNotification(
+      'usr_customer_1',
+      'Scheduled Power Interruption',
+      'Your area is scheduled for maintenance.',
+      NotificationType.PLANNED_SCHEDULE,
+      { test: true },
+      dedupEventKey
+    );
+    const countLogsBefore = Array.from(store.notificationDeliveryLogs.values()).filter(
+      (l) => l.idempotencyKey === dedupEventKey
+    ).length;
+
+    const notif2 = await notificationService.createNotification(
+      'usr_customer_1',
+      'Scheduled Power Interruption',
+      'Your area is scheduled for maintenance.',
+      NotificationType.PLANNED_SCHEDULE,
+      { test: true },
+      dedupEventKey
+    );
+    const countLogsAfter = Array.from(store.notificationDeliveryLogs.values()).filter(
+      (l) => l.idempotencyKey === dedupEventKey
+    ).length;
+
+    assert(
+      notif1.id === notif2.id && countLogsBefore === 1 && countLogsAfter === 1,
+      'Notification Deduplication: Identical eventKey reuses intent and prevents duplicate SMS delivery logs'
+    );
+
+    // 5. Error Isolation & Bounded Retries with Exponential Backoff
+    // Force transient carrier failure
+    simProvider.setFailNext(false);
+    const failingLog = await notificationService.queueSms(
+      notif1.id,
+      '+8801799887766',
+      'Transient test alert',
+      'retry_test_key_1'
+    );
+    // Give async execution microtick
+    await new Promise((r) => setTimeout(r, 50));
+    const storedFailingLog = store.notificationDeliveryLogs.get(failingLog.id);
+    assert(
+      storedFailingLog !== undefined &&
+      storedFailingLog.attempts === 1 &&
+      storedFailingLog.status === DeliveryStatus.QUEUED &&
+      storedFailingLog.nextAttemptAt !== null,
+      'SMS Error Isolation: Transient failure schedules retry with exponential backoff without crashing'
+    );
+
+    // 6. Max bounded attempts transition to FAILED
+    // Force 2 more failures on the log
+    simProvider.setFailNext(false);
+    await notificationService.dispatchSmsLog(failingLog.id, 'Transient test alert');
+    simProvider.setFailNext(false);
+    await notificationService.dispatchSmsLog(failingLog.id, 'Transient test alert');
+    const exhaustedLog = store.notificationDeliveryLogs.get(failingLog.id);
+    assert(
+      exhaustedLog !== undefined &&
+      exhaustedLog.attempts === 3 &&
+      exhaustedLog.status === DeliveryStatus.FAILED,
+      'Bounded Retries: Max attempts (3) transitions delivery status to FAILED'
+    );
+
+    // 7. Twilio Webhook: Rejection of invalid signature (403 INVALID_SIGNATURE)
+    const invalidSigRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/integrations/twilio/status-callback',
+      {
+        MessageSid: 'SM_test_webhook_123',
+        MessageStatus: 'delivered'
+      },
+      undefined,
+      {
+        'X-Twilio-Signature': 'forged_or_invalid_signature'
+      }
+    );
+    assert(
+      invalidSigRes.status === 403 && invalidSigRes.body.error.code === 'INVALID_SIGNATURE',
+      'Twilio Webhook: Invalid X-Twilio-Signature is strictly rejected with 403 INVALID_SIGNATURE'
+    );
+
+    // 8. Twilio Webhook: Unknown MessageSid returns 404 DELIVERY_LOG_NOT_FOUND
+    const unknownSidRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/integrations/twilio/status-callback',
+      {
+        MessageSid: 'SM_nonexistent_message_sid_999',
+        MessageStatus: 'delivered'
+      },
+      undefined,
+      {
+        'X-Twilio-Signature': 'valid_test_signature'
+      }
+    );
+    assert(
+      unknownSidRes.status === 404 && unknownSidRes.body.error.code === 'DELIVERY_LOG_NOT_FOUND',
+      'Twilio Webhook: Unrecognized MessageSid returns 404 DELIVERY_LOG_NOT_FOUND'
+    );
+
+    // 9. Twilio Webhook: Valid callback transitions SENT -> DELIVERED with deliveredAt
+    // Prime a SENT delivery log
+    const primeDeliveryLog = await notificationService.queueSms(
+      notif1.id,
+      '+8801712345678',
+      'Delivered test notification',
+      'prime_delivered_key'
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const primedSid = store.notificationDeliveryLogs.get(primeDeliveryLog.id)?.providerMessageId;
+
+    const validWebhookRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/integrations/twilio/status-callback',
+      {
+        MessageSid: primedSid,
+        MessageStatus: 'delivered'
+      },
+      undefined,
+      {
+        'X-Twilio-Signature': 'valid_test_signature'
+      }
+    );
+    const updatedPrimedLog = store.notificationDeliveryLogs.get(primeDeliveryLog.id);
+    assert(
+      validWebhookRes.status === 200 &&
+      validWebhookRes.body.success === true &&
+      updatedPrimedLog?.status === DeliveryStatus.DELIVERED &&
+      updatedPrimedLog?.deliveredAt !== null,
+      'Twilio Webhook: Valid signed delivered status callback updates delivery log to DELIVERED with timestamp'
+    );
+
+    // 10. Monotonic state transition protection: DELIVERED cannot downgrade to SENT
+    const delayedSentWebhookRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/integrations/twilio/status-callback',
+      {
+        MessageSid: primedSid,
+        MessageStatus: 'sent'
+      },
+      undefined,
+      {
+        'X-Twilio-Signature': 'valid_test_signature'
+      }
+    );
+    assert(
+      delayedSentWebhookRes.status === 200 &&
+      store.notificationDeliveryLogs.get(primeDeliveryLog.id)?.status === DeliveryStatus.DELIVERED,
+      'Twilio Webhook: Out-of-order callback protection prevents DELIVERED from downgrading to SENT'
+    );
+
+    // 11. Admin Visibility into delivery logs
+    const adminNotifRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/notifications',
+      undefined,
+      adminToken
+    );
+    assert(
+      adminNotifRes.status === 200 &&
+      adminNotifRes.body.success === true &&
+      Array.isArray(adminNotifRes.body.data) &&
+      adminNotifRes.body.data.some((l: any) => l.status === DeliveryStatus.DELIVERED),
+      'GET /api/v1/admin/notifications reflects updated delivery logs and status transitions'
     );
 
   } catch (err: any) {
