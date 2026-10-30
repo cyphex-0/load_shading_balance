@@ -610,6 +610,7 @@ customerRouter.post('/customers/me/outage-reports', custAuth, async (req: any, r
       req.user.sub,
       data.meterId,
       data.description,
+      data.faultType,
       data.landmark
     );
 
@@ -619,47 +620,117 @@ customerRouter.post('/customers/me/outage-reports', custAuth, async (req: any, r
   }
 });
 
-// Endpoint 28: GET /api/customers/me/outage-reports
+// Endpoint 28: GET /api/customers/me/outage-reports (Unified History: Fault Tickets & Planned Conflicts)
 customerRouter.get('/customers/me/outage-reports', custAuth, (req: any, res) => {
-  const reports = Array.from(store.outageTickets.values())
+  const tickets = Array.from(store.outageTickets.values())
     .filter((t) => t.customerId === req.user.sub)
-    .sort((a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime())
     .map((t) => {
       const feeder = store.feeders.get(t.feederId);
       const meter = store.meters.get(t.meterId);
       return {
-        ...t,
+        id: t.id,
+        type: 'UNPLANNED_FAULT',
+        ticketNumber: t.ticketNumber,
+        meterId: t.meterId,
+        meterNumber: meter?.meterNumber || 'Unknown',
+        feederId: t.feederId,
         feederName: feeder?.name || 'Unknown',
-        meterNumber: meter?.meterNumber || 'Unknown'
+        status: t.status,
+        faultType: t.faultType || 'OTHER',
+        description: t.description,
+        isPlanned: false,
+        reportedAt: t.reportedAt,
+        resolvedAt: t.resolvedAt,
+        createdAt: t.createdAt
       };
     });
 
-  return successResponse(res, reports);
+  const conflictEvents = Array.from(store.outageReportEvents.values())
+    .filter((e) => e.customerId === req.user.sub)
+    .map((e) => {
+      const feeder = store.feeders.get(e.feederId);
+      const meter = store.meters.get(e.meterId);
+      return {
+        id: e.id,
+        type: 'PLANNED_CONFLICT',
+        ticketNumber: null,
+        meterId: e.meterId,
+        meterNumber: meter?.meterNumber || 'Unknown',
+        feederId: e.feederId,
+        feederName: feeder?.name || 'Unknown',
+        status: 'KNOWN_PLANNED_OUTAGE',
+        faultType: null,
+        description: e.message,
+        isPlanned: true,
+        scheduledEndTime: e.plannedEndTime,
+        reportedAt: e.createdAt,
+        createdAt: e.createdAt
+      };
+    });
+
+  const unified = [...tickets, ...conflictEvents].sort(
+    (a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime()
+  );
+
+  return successResponse(res, unified);
 });
 
 // Endpoint 29: GET /api/customers/me/outage-reports/:id
 customerRouter.get('/customers/me/outage-reports/:id', custAuth, (req: any, res) => {
-  const ticket = store.outageTickets.get(req.params.id);
-  if (!ticket || ticket.customerId !== req.user.sub) {
-    throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
+  const id = req.params.id;
+
+  // 1. Check OutageTicket
+  const ticket = store.outageTickets.get(id);
+  if (ticket) {
+    if (ticket.customerId !== req.user.sub) {
+      throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
+    }
+
+    const feeder = store.feeders.get(ticket.feederId);
+    const meter = store.meters.get(ticket.meterId);
+    const sub = feeder ? store.substations.get(feeder.substationId) : null;
+    const zone = sub ? store.zones.get(sub.zoneId) : null;
+
+    const history = Array.from(store.outageStatusHistories.values()).filter(
+      (h) => h.ticketId === ticket.id
+    );
+
+    return successResponse(res, {
+      ...ticket,
+      type: 'UNPLANNED_FAULT',
+      feederName: feeder?.name,
+      meterNumber: meter?.meterNumber,
+      address: meter?.address,
+      substationName: sub?.name,
+      zoneName: zone?.name,
+      history
+    });
   }
 
-  const feeder = store.feeders.get(ticket.feederId);
-  const meter = store.meters.get(ticket.meterId);
-  const sub = feeder ? store.substations.get(feeder.substationId) : null;
-  const zone = sub ? store.zones.get(sub.zoneId) : null;
+  // 2. Check OutageReportEvent
+  const event = store.outageReportEvents.get(id);
+  if (event) {
+    if (event.customerId !== req.user.sub) {
+      throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
+    }
 
-  const history = Array.from(store.outageStatusHistories.values()).filter(
-    (h) => h.ticketId === ticket.id
-  );
+    const feeder = store.feeders.get(event.feederId);
+    const meter = store.meters.get(event.meterId);
+    const sub = feeder ? store.substations.get(feeder.substationId) : null;
+    const zone = sub ? store.zones.get(sub.zoneId) : null;
 
-  return successResponse(res, {
-    ...ticket,
-    feederName: feeder?.name,
-    meterNumber: meter?.meterNumber,
-    address: meter?.address,
-    substationName: sub?.name,
-    zoneName: zone?.name,
-    history
-  });
+    return successResponse(res, {
+      ...event,
+      type: 'PLANNED_CONFLICT',
+      isPlanned: true,
+      feederName: feeder?.name,
+      meterNumber: meter?.meterNumber,
+      address: meter?.address,
+      substationName: sub?.name,
+      zoneName: zone?.name,
+      history: []
+    });
+  }
+
+  throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
 });
