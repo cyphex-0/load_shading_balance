@@ -427,4 +427,26 @@ export const listInfrastructureRequestsQuerySchema = paginationQuerySchema.exten
   zoneId: z.string().optional()
 });
 
+// ============================================================================
+// Phase 22: Admin Audit & Notification Monitoring Query Schemas
+// ============================================================================
+
+export const auditLogsQuerySchema = paginationQuerySchema.extend({
+  actorId: z.string().optional(),
+  userId: z.string().optional(),
+  action: z.string().optional(),
+  entity: z.string().optional(),
+  ipAddress: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional()
+});
+
+export const adminNotificationsQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(DeliveryStatus).optional(),
+  channel: z.string().optional(),
+  recipientPhone: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional()
+});
+
 

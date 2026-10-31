@@ -917,4 +917,47 @@ export interface ZoneDailyDeficitResponseDto {
   dailyBreakdown: DailyDeficitItemDto[];
 }
 
+// ============================================================================
+// Phase 22: Admin Audit, Notification Monitoring & Decision DTOs
+// ============================================================================
+
+export interface AuditLogDto {
+  id: string;
+  actorId?: string | null;
+  actorName?: string | null;
+  actorEmail?: string | null;
+  action: string;
+  entity: string;
+  entityId?: string | null;
+  details?: Record<string, any> | null;
+  ipAddress?: string | null;
+  createdAt: string;
+}
+
+export interface AdminNotificationLogDto {
+  id: string;
+  notificationId?: string | null;
+  recipientPhone: string;
+  recipientName?: string | null;
+  channel: string;
+  status: DeliveryStatus;
+  providerResponse?: string | null;
+  providerMessageId?: string | null;
+  attempts: number;
+  error?: string | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  createdAt: string;
+}
+
+export interface NotificationDeliveryTelemetryDto {
+  totalLogged: number;
+  deliveredCount: number;
+  sentCount: number;
+  failedCount: number;
+  queuedCount: number;
+  deliverySuccessRate: number;
+  items: AdminNotificationLogDto[];
+}
+
 
