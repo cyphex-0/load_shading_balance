@@ -18,6 +18,7 @@ import { managerRouter } from './modules/manager.router';
 import { adminRouter } from './modules/admin.router';
 import { integrationsRouter } from './modules/integrations.router';
 import { outagesRouter } from './modules/outages.router';
+import { attachmentsRouter } from './modules/attachments.router';
 import { errorResponse } from './utils/response';
 
 export const createApp = () => {
@@ -76,7 +77,8 @@ export const createApp = () => {
     managerRouter,
     adminRouter,
     integrationsRouter,
-    outagesRouter
+    outagesRouter,
+    attachmentsRouter
   ];
 
   for (const router of apiRouters) {
