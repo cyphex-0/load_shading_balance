@@ -960,4 +960,72 @@ export interface NotificationDeliveryTelemetryDto {
   items: AdminNotificationLogDto[];
 }
 
+// ============================================================================
+// Phase 23: Authenticated Socket.io Backbone & Domain Event DTOs
+// ============================================================================
+
+export interface FeederStatusChangedSocketPayload {
+  feederId: string;
+  status: string;
+  timestamp: string;
+  zoneId?: string;
+  substationId?: string;
+}
+
+export interface TicketCreatedSocketPayload {
+  ticketId: string;
+  ticketNumber: string;
+  feederId: string;
+  feederName: string;
+  zoneId?: string;
+  priority?: string;
+  description: string;
+  reportedAt: string;
+}
+
+export interface TicketAssignedSocketPayload {
+  ticketId: string;
+  technicianId: string;
+  feederName: string;
+  address: string;
+  assignedAt: string;
+}
+
+export interface TicketStatusChangedSocketPayload {
+  ticketId: string;
+  customerId: string;
+  zoneId?: string;
+  status: string;
+  enRouteAt?: string | null;
+  repairingAt?: string | null;
+  resolvedAt?: string | null;
+  updatedAt: string;
+}
+
+export interface SchedulePublishedSocketPayload {
+  scheduleId: string;
+  planningDate: string;
+  affectedFeedersCount: number;
+  totalDeficitMwh?: number;
+}
+
+export interface NotificationNewSocketPayload {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  channel: string;
+  createdAt: string;
+}
+
+export interface SocketServerStats {
+  totalConnections: number;
+  authenticatedConnections: number;
+  guestConnections: number;
+  activeRoomsCount: number;
+  rooms: string[];
+}
+
+
 

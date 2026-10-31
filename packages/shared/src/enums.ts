@@ -79,6 +79,7 @@ export enum SocketEvent {
   TICKET_CREATED = 'ticket:created',
   TICKET_ASSIGNED = 'ticket:assigned',
   TICKET_STATUS_CHANGED = 'ticket:status_changed',
-  SCHEDULE_PUBLISHED = 'schedule:published'
+  SCHEDULE_PUBLISHED = 'schedule:published',
+  NOTIFICATION_NEW = 'notification:new'
 }
 
