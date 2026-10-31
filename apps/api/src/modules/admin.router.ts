@@ -40,6 +40,7 @@ import {
 import { toSafeUser } from '../db/helpers';
 import { adminService } from '../services/admin.service';
 import { getSocketServerStats } from '../sockets/socket.server';
+import { getBackgroundJobsStatus, triggerJobManually } from '../jobs/cron';
 
 export const adminRouter = Router();
 
@@ -957,4 +958,39 @@ adminRouter.get(
   ['/admin/socket/stats', '/v1/admin/socket/stats'],
   handleGetSocketStats
 );
+
+// GET /api/v1/admin/jobs/status
+const handleGetJobsStatus = (_req: any, res: any, next: any) => {
+  try {
+    const jobs = getBackgroundJobsStatus();
+    return successResponse(res, jobs);
+  } catch (err) {
+    next(err);
+  }
+};
+
+adminRouter.get(
+  ['/admin/jobs/status', '/v1/admin/jobs/status', '/admin/jobs', '/v1/admin/jobs'],
+  handleGetJobsStatus
+);
+
+// POST /api/v1/admin/jobs/:jobName/trigger
+const handleTriggerJob = async (req: any, res: any, next: any) => {
+  try {
+    const { jobName } = req.params;
+    const result = await triggerJobManually(jobName);
+    if (!result.triggered && result.status === 'ERROR') {
+      throw new NotFoundError(result.message, 'JOB_NOT_FOUND');
+    }
+    return successResponse(res, result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+adminRouter.post(
+  ['/admin/jobs/:jobName/trigger', '/v1/admin/jobs/:jobName/trigger'],
+  handleTriggerJob
+);
+
 
