@@ -36,8 +36,18 @@ import { requireRole, verifyZoneScope } from '../middleware/auth';
 import { getSimulatedProvider } from '../integrations/sms';
 import { notificationService } from '../services/notification.service';
 import { outageService } from '../services/outage.service';
-
 import { NotificationTemplates } from '../services/notification-templates';
+import { initSocketServer, closeSocketServer, socketEmitter, getSocketServerStats } from '../sockets/socket.server';
+import {
+  startBackgroundJobs,
+  stopBackgroundJobs,
+  getBackgroundJobsStatus,
+  triggerJobManually,
+  reconcileScheduleFeederStatuses
+} from '../jobs/cron';
+import { lockManager } from '../utils/lock';
+import { config } from '../config';
+import { io as ioClient, Socket as ClientSocket } from 'socket.io-client';
 
 
 // Helper to make test HTTP requests
@@ -80,6 +90,8 @@ const runSuite = async () => {
   const server = http.createServer(app);
 
   await new Promise<void>((resolve) => server.listen(4001, () => resolve()));
+  initSocketServer(server);
+  startBackgroundJobs();
   const serverUrl = 'http://localhost:4001';
 
   let passed = 0;
@@ -4536,12 +4548,382 @@ const runSuite = async () => {
       'Not Found Guard: Non-existent infrastructure request review returns 404 REQUEST_NOT_FOUND'
     );
 
+    // =========================================================================
+    // Test 30: Phase 23 - Authenticated Socket.io Backbone & Domain Events
+    // =========================================================================
+    logger.info('\n--- Test 30: Phase 23 Socket.io Backbone & Domain Events ---');
+
+    // 30a. Socket Server Stats Endpoint (Admin)
+    const socketStatsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/socket/stats',
+      undefined,
+      adminToken
+    );
+    assert(
+      socketStatsRes.status === 200 &&
+      socketStatsRes.body.success === true &&
+      typeof socketStatsRes.body.data.totalConnections === 'number' &&
+      Array.isArray(socketStatsRes.body.data.rooms),
+      'Socket Server Stats: GET /api/v1/admin/socket/stats returns connection and room metrics'
+    );
+
+    // 30b. RBAC Guard: Non-admin (Customer) blocked from Socket Stats
+    const socketStatsCustomerRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/socket/stats',
+      undefined,
+      customerToken
+    );
+    assert(
+      socketStatsCustomerRes.status === 403,
+      'RBAC Guard: Customer blocked from socket stats endpoint (403 Forbidden)'
+    );
+
+    // 30c. Live Socket.io Handshake & Ping/Pong
+    const testGuestSocket: ClientSocket = ioClient(serverUrl, {
+      transports: ['websocket', 'polling'],
+      forceNew: true,
+      reconnection: false
+    });
+
+    const pingReceived = await new Promise<boolean>((resolve) => {
+      testGuestSocket.on('connect', () => {
+        testGuestSocket.emit('ping', (ack: any) => {
+          resolve(ack && ack.pong === true);
+        });
+      });
+      testGuestSocket.on('connect_error', () => resolve(false));
+      setTimeout(() => resolve(false), 2000);
+    });
+    assert(
+      pingReceived,
+      'Live Socket Handshake: Client successfully connects and exchanges ping/pong heartbeat'
+    );
+
+    // 30d. Live Socket RBAC Guard: Unauthorized guest attempting subscribe:operator
+    const operatorSubscribeResult = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      testGuestSocket.emit('subscribe:operator', (ack: any) => {
+        resolve(ack || { success: false });
+      });
+      setTimeout(() => resolve({ success: false, error: 'TIMEOUT' }), 2000);
+    });
+    assert(
+      operatorSubscribeResult.success === false &&
+      operatorSubscribeResult.error === 'FORBIDDEN_OPERATOR_ACCESS',
+      'Socket Security Guard: Unauthenticated guest subscription to operators room rejected'
+    );
+
+    // 30e. Authenticated Operator Socket Handshake & Subscription
+    const testOperatorSocket: ClientSocket = ioClient(serverUrl, {
+      auth: { token: opToken },
+      transports: ['websocket', 'polling'],
+      forceNew: true,
+      reconnection: false
+    });
+
+    const operatorSubscribed = await new Promise<boolean>((resolve) => {
+      testOperatorSocket.on('connect', () => {
+        testOperatorSocket.emit('subscribe:operator', (ack: any) => {
+          resolve(ack && ack.success === true && ack.room === 'operators');
+        });
+      });
+      testOperatorSocket.on('connect_error', () => resolve(false));
+      setTimeout(() => resolve(false), 2000);
+    });
+    assert(
+      operatorSubscribed,
+      'Authenticated Operator Handshake: Operator token successfully subscribes to operators room'
+    );
+
+    // Clean up test sockets
+    testGuestSocket.disconnect();
+    testOperatorSocket.disconnect();
+
+    // 30f. Real-time Domain Event Emitters: Feeder Status Changed
+    let feederEmitterThrew = false;
+    try {
+      socketEmitter.emitFeederStatusChanged({
+        feederId: 'feeder_dhaka_01',
+        status: FeederStatus.PLANNED_OUTAGE,
+        timestamp: new Date().toISOString(),
+        zoneId: 'zone_dhaka_central'
+      });
+    } catch {
+      feederEmitterThrew = true;
+    }
+    assert(
+      !feederEmitterThrew,
+      'Domain Event Emitter: socketEmitter.emitFeederStatusChanged broadcasts cleanly'
+    );
+
+    // 30g. Real-time Domain Event Emitters: Ticket State Lifecycle
+    let ticketEmittersThrew = false;
+    try {
+      socketEmitter.emitTicketCreated({
+        ticketId: 'tkt_socket_test',
+        ticketNumber: 'TKT-SOCK-001',
+        feederId: 'feeder_dhaka_01',
+        feederName: 'Dhanmondi Feeder',
+        zoneId: 'zone_dhaka_central',
+        priority: 'HIGH',
+        description: 'Test outage',
+        reportedAt: new Date().toISOString()
+      });
+      socketEmitter.emitTicketAssigned({
+        ticketId: 'tkt_socket_test',
+        technicianId: 'tech_01',
+        feederName: 'Dhanmondi Feeder',
+        address: 'Road 27',
+        assignedAt: new Date().toISOString()
+      });
+      socketEmitter.emitTicketStatusChanged({
+        ticketId: 'tkt_socket_test',
+        customerId: customerUserId,
+        zoneId: 'zone_dhaka_central',
+        status: OutageStatus.REPAIRING,
+        updatedAt: new Date().toISOString()
+      });
+    } catch {
+      ticketEmittersThrew = true;
+    }
+    assert(
+      !ticketEmittersThrew,
+      'Domain Event Emitter: Ticket lifecycle emitters (created, assigned, status_changed) execute cleanly'
+    );
+
+    // 30h. Real-time Domain Event Emitters: New Notification Event
+    let notificationEmitterThrew = false;
+    try {
+      socketEmitter.emitNotificationNew({
+        id: 'notif_socket_test',
+        userId: customerUserId,
+        title: 'Power Outage Scheduled',
+        message: 'Your feeder has scheduled maintenance.',
+        type: NotificationType.PLANNED_SCHEDULE,
+        channel: 'IN_APP',
+        createdAt: new Date().toISOString()
+      });
+    } catch {
+      notificationEmitterThrew = true;
+    }
+    assert(
+      !notificationEmitterThrew,
+      'Domain Event Emitter: socketEmitter.emitNotificationNew broadcasts to customer room cleanly'
+    );
+
+    // =========================================================================
+    // Test 31: Phase 24 - Background Jobs, Locks, Reconciliation & Guardrails
+    // =========================================================================
+    logger.info('\n--- Test 31: Phase 24 Background Jobs, Locks & Simulation Guardrails ---');
+
+    // 31a. Distributed Lock: Mutual Exclusion
+    const lockAcquiredFirst = await lockManager.acquireLock('lock:test:mutex', 10, 'worker_alpha');
+    const lockAcquiredSecond = await lockManager.acquireLock('lock:test:mutex', 10, 'worker_beta');
+    assert(
+      lockAcquiredFirst === true && lockAcquiredSecond === false,
+      'Distributed Lock: First worker acquires lock; second concurrent worker is blocked'
+    );
+
+    // 31b. Distributed Lock: Owner-enforced Release & Re-acquisition
+    const releaseMismatched = await lockManager.releaseLock('lock:test:mutex', 'worker_wrong');
+    const releaseMatched = await lockManager.releaseLock('lock:test:mutex', 'worker_alpha');
+    const lockAcquiredAfterRelease = await lockManager.acquireLock('lock:test:mutex', 10, 'worker_beta');
+    await lockManager.releaseLock('lock:test:mutex', 'worker_beta');
+    assert(
+      releaseMismatched === false && releaseMatched === true && lockAcquiredAfterRelease === true,
+      'Distributed Lock: Only holding owner can release lease; lock becomes available immediately'
+    );
+
+    // 31c. Schedule Enforcer: Slot Activation (ONLINE -> PLANNED_OUTAGE)
+    const testSchedId = 'sched_p24_test_' + Date.now();
+    const testSlotId = 'slot_p24_test_' + Date.now();
+    const testFeederId = 'feeder_p24_active_' + Date.now();
+    const p24NowTime = new Date();
+    const slotStart = new Date(p24NowTime.getTime() - 10 * 60 * 1000).toISOString(); // 10 mins ago
+    const slotEnd = new Date(p24NowTime.getTime() + 50 * 60 * 1000).toISOString();   // 50 mins in future
+
+    store.feeders.set(testFeederId, {
+      id: testFeederId,
+      name: 'P24 Test Feeder 1',
+      code: 'FDR-P24-01',
+      substationId: 'sub_test',
+      capacityMW: 15,
+      isCritical: false,
+      status: FeederStatus.ONLINE,
+      createdAt: p24NowTime.toISOString(),
+      updatedAt: p24NowTime.toISOString(),
+      deletedAt: null
+    });
+
+    store.schedules.set(testSchedId, {
+      id: testSchedId,
+      planningDate: p24NowTime.toISOString().split('T')[0],
+      status: ScheduleStatus.PUBLISHED,
+      createdById: 'admin_01',
+      publishedAt: p24NowTime.toISOString(),
+      cancelledAt: null,
+      cancellationReason: null,
+      createdAt: p24NowTime.toISOString(),
+      updatedAt: p24NowTime.toISOString()
+    } as any);
+
+    store.scheduleSlots.set(testSlotId, {
+      id: testSlotId,
+      scheduleId: testSchedId,
+      slotNumber: 1,
+      startTime: slotStart,
+      endTime: slotEnd,
+      targetDeficitMW: 15,
+      actualDeficitMW: 15,
+      createdAt: p24NowTime.toISOString(),
+      updatedAt: p24NowTime.toISOString()
+    } as any);
+
+    store.scheduleFeederAssignments.set(`asgn_${testSlotId}_${testFeederId}`, {
+      id: `asgn_${testSlotId}_${testFeederId}`,
+      slotId: testSlotId,
+      feederId: testFeederId,
+      createdAt: p24NowTime.toISOString()
+    } as any);
+
+    // Trigger reconciliation at p24NowTime
+    await reconcileScheduleFeederStatuses(p24NowTime);
+    const feederAfterActivation = store.feeders.get(testFeederId);
+    assert(
+      feederAfterActivation?.status === FeederStatus.PLANNED_OUTAGE,
+      'Schedule Enforcer: Feeder inside published active slot transitions to PLANNED_OUTAGE'
+    );
+
+    // 31d. Schedule Enforcer: Slot Completion (PLANNED_OUTAGE -> ONLINE)
+    const futureTimePastSlot = new Date(p24NowTime.getTime() + 65 * 60 * 1000); // 65 mins ahead (slot ended)
+    await reconcileScheduleFeederStatuses(futureTimePastSlot);
+    const feederAfterCompletion = store.feeders.get(testFeederId);
+    assert(
+      feederAfterCompletion?.status === FeederStatus.ONLINE,
+      'Schedule Enforcer: Feeder restored to ONLINE upon slot expiration when no active fault tickets exist'
+    );
+
+    // 31e. Schedule Enforcer: Fault Ticket Preservation
+    const testFeederFaultId = 'feeder_p24_fault_' + Date.now();
+    store.feeders.set(testFeederFaultId, {
+      id: testFeederFaultId,
+      name: 'P24 Fault Feeder',
+      code: 'FDR-P24-FAULT',
+      substationId: 'sub_test',
+      capacityMW: 20,
+      isCritical: false,
+      status: FeederStatus.PLANNED_OUTAGE,
+      createdAt: p24NowTime.toISOString(),
+      updatedAt: p24NowTime.toISOString(),
+      deletedAt: null
+    });
+
+    store.scheduleFeederAssignments.set(`asgn_${testSlotId}_${testFeederFaultId}`, {
+      id: `asgn_${testSlotId}_${testFeederFaultId}`,
+      slotId: testSlotId,
+      feederId: testFeederFaultId,
+      createdAt: p24NowTime.toISOString()
+    } as any);
+
+    // Inject active ticket on this feeder
+    const ticketIdFault = 'tkt_fault_p24_' + Date.now();
+    store.outageTickets.set(ticketIdFault, {
+      id: ticketIdFault,
+      ticketNumber: 'TKT-P24-FAULT',
+      feederId: testFeederFaultId,
+      substationId: 'sub_test',
+      zoneId: 'zone_dhaka_central',
+      source: 'MANUAL',
+      status: OutageStatus.REPAIRING,
+      assignedTechnicianId: 'tech_01',
+      reportedAt: p24NowTime.toISOString(),
+      updatedAt: p24NowTime.toISOString(),
+      createdAt: p24NowTime.toISOString()
+    } as any);
+
+    await reconcileScheduleFeederStatuses(futureTimePastSlot);
+    const feederAfterFaultCheck = store.feeders.get(testFeederFaultId);
+    assert(
+      feederAfterFaultCheck?.status === FeederStatus.PLANNED_OUTAGE,
+      'Schedule Enforcer: Feeder with open unexpected outage ticket remains in outage; not restored to ONLINE'
+    );
+
+    // Clean up test ticket
+    store.outageTickets.delete(ticketIdFault);
+
+    // 31f. Restart Safety: Startup Reconciliation Check
+    const reconResult = await reconcileScheduleFeederStatuses();
+    assert(
+      typeof reconResult.evaluatedFeeders === 'number' &&
+      typeof reconResult.transitionedToPlannedOutage === 'number' &&
+      typeof reconResult.restoredToOnline === 'number',
+      'Restart Safety: Startup reconciliation executes cleanly returning evaluation counts'
+    );
+
+    // 31g. Simulation Guardrail (Decision D-14): Strictly gated by ENABLE_DEMO_SIMULATION
+    const initialMetricsCount = store.gridMetrics.length;
+    const triggerSimResult = await triggerJobManually('demo-simulator');
+    assert(
+      triggerSimResult.status === 'SKIPPED_LOCKED' &&
+      store.gridMetrics.length === initialMetricsCount,
+      'Simulation Guardrail: Demo simulation blocked when ENABLE_DEMO_SIMULATION=false; zero metrics written'
+    );
+
+    // 31h. Admin Job Monitoring & Manual Trigger Endpoints
+    const jobsStatusRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/jobs/status',
+      undefined,
+      adminToken
+    );
+    assert(
+      jobsStatusRes.status === 200 &&
+      Array.isArray(jobsStatusRes.body.data) &&
+      jobsStatusRes.body.data.some((j: any) => j.name === 'schedule-enforcer'),
+      'Admin Job Telemetry: GET /api/v1/admin/jobs/status returns registered background automations'
+    );
+
+    const triggerJobRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/jobs/schedule-enforcer/trigger',
+      {},
+      adminToken
+    );
+    assert(
+      triggerJobRes.status === 200 &&
+      triggerJobRes.body.data.triggered === true &&
+      triggerJobRes.body.data.status === 'SUCCESS',
+      'Admin Job Trigger: POST /api/v1/admin/jobs/:jobName/trigger executes schedule-enforcer on demand'
+    );
+
+    const nonExistentTriggerRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/jobs/non-existent-cron-job/trigger',
+      {},
+      adminToken
+    );
+    assert(
+      nonExistentTriggerRes.status === 404 &&
+      nonExistentTriggerRes.body.error.code === 'JOB_NOT_FOUND',
+      'Admin Job Guard: Triggering non-existent background job returns 404 JOB_NOT_FOUND'
+    );
+
 
 
   } catch (err: any) {
     logger.error('Test execution error:', err);
     failed++;
   } finally {
+    try {
+      stopBackgroundJobs();
+      await closeSocketServer();
+    } catch {}
     server.close();
     logger.info(`\n==========================================`);
     logger.info(`🏁 Test Summary: ${passed} PASSED, ${failed} FAILED`);
