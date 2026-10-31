@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserRole, UserDto } from '@load-shedding/shared';
 import { ApiClient } from './api';
+import { updateSocketAuth, disconnectSocket } from './socket';
 
 interface AuthContextType {
   user: UserDto | null;
@@ -35,6 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(savedToken);
       try {
         setUser(JSON.parse(savedUser));
+        updateSocketAuth(savedToken);
       } catch {
         localStorage.removeItem('auth_user');
       }
@@ -47,6 +49,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(newUser);
     localStorage.setItem('auth_token', newToken);
     localStorage.setItem('auth_user', JSON.stringify(newUser));
+    // Immediately upgrade active WebSocket session into user's authenticated role rooms
+    updateSocketAuth(newToken);
   };
 
   const logout = async () => {
@@ -59,6 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_user');
+    disconnectSocket();
     window.location.href = '/login';
   };
 
@@ -79,4 +84,3 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 export const useAuth = () => useContext(AuthContext);
-

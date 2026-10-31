@@ -1,5 +1,9 @@
+const isDev = process.env.NODE_ENV !== 'production';
+const DEFAULT_DEV_API = 'http://localhost:4000';
+const DEFAULT_PROD_API = 'https://load-shading-balance.onrender.com';
+
 const API_TARGET = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://load-shading-balance.onrender.com'
+  process.env.NEXT_PUBLIC_API_URL || (isDev ? DEFAULT_DEV_API : DEFAULT_PROD_API)
 ).replace(/\/$/, '');
 
 /** @type {import('next').NextConfig} */

@@ -48,14 +48,19 @@ export const createApp = () => {
     new Set([
       ...configuredOrigins,
       'http://localhost:3000',
-      'http://127.0.0.1:3000'
+      'http://127.0.0.1:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3001',
+      'https://load-shading-balance.vercel.app'
     ])
   );
 
   app.use(
     cors({
       origin: allowedOrigins,
-      credentials: true
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-request-id']
     })
   );
   app.use(cookieParser());

@@ -27,7 +27,10 @@ export const initSocketServer = (httpServer: HttpServer): SocketIOServer => {
     new Set([
       ...configuredOrigins,
       'http://localhost:3000',
-      'http://127.0.0.1:3000'
+      'http://127.0.0.1:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3001',
+      'https://load-shading-balance.vercel.app'
     ])
   );
 
@@ -366,3 +369,4 @@ export const socketEmitter = {
     io.to(`customer:${data.userId}`).emit(SocketEvent.NOTIFICATION_NEW, data);
   }
 };
+

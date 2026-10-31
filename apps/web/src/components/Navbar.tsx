@@ -14,19 +14,24 @@ import {
   Calendar,
   Info,
   Menu,
-  X
+  X,
+  RefreshCw,
+  Server
 } from 'lucide-react';
 import { useAuth } from '../lib/auth-context';
 import { UserRole } from '@load-shedding/shared';
-import { getSocket } from '../lib/socket';
+import { getSocket, getSocketTargetUrl, reconnectSocket } from '../lib/socket';
 
 export const Navbar = () => {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const [socketConnected, setSocketConnected] = useState(false);
+  const [targetUrl, setTargetUrl] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
+    setTargetUrl(getSocketTargetUrl());
     const socket = getSocket();
     setSocketConnected(socket.connected);
 
@@ -41,6 +46,18 @@ export const Navbar = () => {
       socket.off('disconnect', onDisconnect);
     };
   }, []);
+
+  const handleManualReconnect = () => {
+    setReconnecting(true);
+    reconnectSocket();
+    setTimeout(() => {
+      setReconnecting(false);
+      const s = getSocket();
+      setSocketConnected(s.connected);
+    }, 1200);
+  };
+
+  const isLocalBackend = targetUrl.includes('localhost') || targetUrl.includes('127.0.0.1');
 
   const getDashboardLink = () => {
     if (!user) return '/login';
@@ -97,14 +114,37 @@ export const Navbar = () => {
             </div>
           </Link>
 
-          {/* Real-time Socket Connection Status Pill */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono font-medium bg-slate-100 border border-slate-200 text-slate-700">
+          {/* Real-time Backend Connection Pill with Local/Cloud Tag */}
+          <div
+            className={`hidden lg:flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-mono font-medium border shadow-2xs transition-all ${
+              socketConnected
+                ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                : 'bg-amber-50/80 border-amber-200 text-amber-900'
+            }`}
+            title={`Connected to ${targetUrl || 'API'}. Click to test reconnection.`}
+          >
             <span
               className={`h-2 w-2 rounded-full ${
-                socketConnected ? 'bg-emerald-600' : 'bg-amber-500'
+                socketConnected ? 'bg-emerald-500 animate-telemetry-pulse' : 'bg-amber-500 animate-pulse'
               }`}
             />
-            <span>{socketConnected ? 'TELEMETRY LIVE' : 'CONNECTING...'}</span>
+            <span>
+              {socketConnected ? 'API SYNCED' : 'CONNECTING...'}
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-600">
+              <Server className="h-2.5 w-2.5 text-slate-400" />
+              {isLocalBackend ? 'LOCAL :4000' : 'RENDER CLOUD'}
+            </span>
+            <button
+              onClick={handleManualReconnect}
+              disabled={reconnecting}
+              className="ml-1 p-0.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 transition-colors"
+              title="Test Reconnect"
+              aria-label="Test Reconnect"
+            >
+              <RefreshCw className={`h-2.5 w-2.5 ${reconnecting ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
 
@@ -228,6 +268,17 @@ export const Navbar = () => {
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-slate-200 bg-white px-4 py-4 space-y-2">
+          {/* Mobile Target Backend Info */}
+          <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono text-slate-600 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${socketConnected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              {socketConnected ? 'API Connected' : 'Connecting...'}
+            </span>
+            <span className="font-semibold text-slate-800">
+              {isLocalBackend ? 'Local :4000' : 'Render Cloud'}
+            </span>
+          </div>
+
           <Link
             href="/"
             onClick={() => setMobileMenuOpen(false)}

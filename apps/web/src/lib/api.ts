@@ -1,8 +1,22 @@
 import { ApiResponse } from '@load-shedding/shared';
 
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://load-shading-balance.onrender.com'
-).replace(/\/$/, '');
+/**
+ * Resolves the active backend API base URL:
+ * 1. Checks explicit NEXT_PUBLIC_API_URL environment variable.
+ * 2. In browser on localhost or 127.0.0.1, defaults to local Express server at http://localhost:4000.
+ * 3. Falls back to production cloud deployment at https://load-shading-balance.onrender.com.
+ */
+export const getApiBaseUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:4000';
+    }
+  }
+  return 'https://load-shading-balance.onrender.com';
+};
 
 export class ApiClient {
   private static getToken(): string | null {
@@ -27,7 +41,8 @@ export class ApiClient {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
+    const baseUrl = getApiBaseUrl();
+    const url = path.startsWith('http') ? path : `${baseUrl}${path}`;
 
     try {
       const response = await fetch(url, {
@@ -36,8 +51,32 @@ export class ApiClient {
         credentials: 'omit' // We pass token explicitly in Authorization header
       });
 
-      const data = await response.json();
-      return data as ApiResponse<T>;
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        return data as ApiResponse<T>;
+      }
+
+      // Handle non-JSON responses (e.g. 502/503 HTML gateway pages)
+      const text = await response.text();
+      if (!response.ok) {
+        return {
+          success: false,
+          data: null,
+          error: {
+            code: `HTTP_${response.status}`,
+            message: `API server returned ${response.status} (${response.statusText || 'Error'}). Service may be starting up.`
+          },
+          timestamp: new Date().toISOString()
+        };
+      }
+
+      return {
+        success: true,
+        data: text as unknown as T,
+        error: null,
+        timestamp: new Date().toISOString()
+      };
     } catch (err: any) {
       return {
         success: false,
@@ -73,4 +112,3 @@ export class ApiClient {
     return this.request<T>(path, { method: 'DELETE' });
   }
 }
-
