@@ -379,4 +379,52 @@ export const reassignTechnicianSchema = z.object({
   reason: z.string().min(3, 'Reassignment reason is required (minimum 3 characters)')
 });
 
+// ============================================================================
+// Phase 21: Zone Manager Oversight & Analytics Query Schemas
+// ============================================================================
+
+export const zoneManagerFeedersQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(FeederStatus).optional(),
+  search: z.string().optional(),
+  substationId: z.string().optional()
+});
+
+export const zoneManagerTicketsQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(OutageStatus).optional(),
+  faultType: z.nativeEnum(FaultType).optional(),
+  feederId: z.string().optional()
+});
+
+export const zoneManagerTechniciansQuerySchema = z.object({
+  isAvailable: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((v) => v === true || v === 'true')
+    .optional(),
+  search: z.string().optional()
+});
+
+export const feederFailureRateQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  limit: z.coerce.number().int().positive().optional().default(20)
+});
+
+export const mttrQuerySchema = z.object({
+  technicianId: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional()
+});
+
+export const dailyDeficitQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  interval: z.enum(['daily', 'weekly']).optional().default('daily')
+});
+
+export const listInfrastructureRequestsQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(UpgradeRequestStatus).optional(),
+  feederId: z.string().optional(),
+  zoneId: z.string().optional()
+});
+
 

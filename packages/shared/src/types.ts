@@ -792,4 +792,129 @@ export interface TechnicianRosterItemDto {
   lastCompletedAt?: string | null;
 }
 
+// ============================================================================
+// Phase 21: Zone Manager Grid, Tickets, Roster & Analytics DTOs
+// ============================================================================
+
+export interface ZoneFeederTableItemDto {
+  id: string;
+  name: string;
+  code: string;
+  capacityMW: number;
+  isCritical: boolean;
+  status: FeederStatus;
+  substationId: string;
+  substationName: string;
+  zoneId: string;
+  zoneName: string;
+  connectedTransformersCount: number;
+  connectedMetersCount: number;
+  openTicketsCount: number;
+  updatedAt: string;
+}
+
+export interface ZoneGridOverviewDto {
+  zone: ZoneDto | null;
+  totalFeeders: number;
+  totalCapacityMW: number;
+  onlineFeedersCount: number;
+  faultFeedersCount: number;
+  scheduledFeedersCount: number;
+  feeders: ZoneFeederTableItemDto[];
+}
+
+export interface ZoneManagerTicketDto {
+  id: string;
+  ticketNumber: string;
+  meterId: string;
+  meterNumber?: string;
+  address?: string;
+  feederId: string;
+  feederName: string;
+  feederCode?: string;
+  substationName?: string;
+  zoneId?: string;
+  zoneName?: string;
+  customerId: string;
+  customerName?: string;
+  customerPhone?: string | null;
+  faultType: FaultType;
+  description: string;
+  landmark?: string | null;
+  status: OutageStatus;
+  assignedTechnician?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    status: AssignmentStatus;
+  } | null;
+  reportedAt: string;
+  assignedAt?: string | null;
+  resolvedAt?: string | null;
+  resolutionNotes?: string | null;
+  verifiedAttachmentsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeederFailureRateItemDto {
+  feederId: string;
+  feederName: string;
+  feederCode: string;
+  substationName?: string;
+  capacityMW: number;
+  isCritical: boolean;
+  faultCount: number;
+  resolvedFaultCount: number;
+  totalDowntimeMinutes: number;
+  averageResolutionMinutes: number;
+  lastFaultAt?: string | null;
+}
+
+export interface MttrAnalyticsItemDto {
+  technicianId: string;
+  technicianName: string;
+  email: string;
+  phone?: string | null;
+  assignedZoneId?: string | null;
+  ticketCount: number;
+  resolvedTicketsCount: number;
+  totalResolutionMinutes: number;
+  mttrMinutes: number;
+  avgResolutionMinutes: number;
+  fastestRepairMinutes?: number | null;
+  longestRepairMinutes?: number | null;
+}
+
+export interface ZoneMttrResponseDto {
+  zoneId: string;
+  zoneName: string;
+  from?: string;
+  to?: string;
+  totalCompletedRepairs: number;
+  overallZoneMttrMinutes: number;
+  technicians: MttrAnalyticsItemDto[];
+}
+
+export interface DailyDeficitItemDto {
+  date: string; // YYYY-MM-DD
+  totalSlots: number;
+  affectedFeedersCount: number;
+  deficitMW: number;
+  loadShedMWh: number;
+}
+
+export interface ZoneDailyDeficitResponseDto {
+  zoneId: string;
+  zoneName: string;
+  from: string;
+  to: string;
+  totalDeficitShedMW: number;
+  totalLoadShedMWh: number;
+  peakDeficitDate: string | null;
+  peakDeficitMW: number;
+  averageDailyDeficitMW: number;
+  dailyBreakdown: DailyDeficitItemDto[];
+}
+
 
