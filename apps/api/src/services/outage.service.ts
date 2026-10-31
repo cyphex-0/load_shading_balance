@@ -10,7 +10,12 @@ import {
   OutageStatusHistoryDto,
   OutageTransitionResultDto,
   AutoAssignResultDto,
-  JwtPayload
+  JwtPayload,
+  TechnicianStatsDto,
+  TechnicianAssignmentDto,
+  DispatchQueueItemDto,
+  TechnicianRosterItemDto,
+  OutageAttachmentDto
 } from '@load-shedding/shared';
 import {
   store,
@@ -27,6 +32,7 @@ import {
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from './notification.service';
 import { NotificationTemplates } from './notification-templates';
+import { attachmentService } from './attachment.service';
 import { logger } from '../utils/logger';
 
 export class OutageService {
@@ -583,6 +589,469 @@ export class OutageService {
   getTicketHistory(ticketId: string, user?: JwtPayload): OutageStatusHistoryDto[] {
     const detail = this.getTicketDetail(ticketId, user);
     return detail.history || [];
+  }
+
+  /**
+   * Phase 20: Retrieves enriched assignments for a specific field technician.
+   */
+  async getTechnicianAssignments(
+    technicianId: string,
+    statusFilter?: string
+  ): Promise<TechnicianAssignmentDto[]> {
+    const technician = store.users.get(technicianId);
+    if (!technician) {
+      throw new NotFoundError('Technician not found', 'TECHNICIAN_NOT_FOUND');
+    }
+
+    const assignments = Array.from(store.technicianAssignments.values()).filter(
+      (a) => a.technicianId === technicianId
+    );
+
+    const result: TechnicianAssignmentDto[] = [];
+
+    for (const a of assignments) {
+      const ticket = store.outageTickets.get(a.ticketId);
+      if (!ticket) continue;
+
+      if (statusFilter) {
+        if (ticket.status !== statusFilter && a.status !== statusFilter) {
+          continue;
+        }
+      }
+
+      const feeder = store.feeders.get(ticket.feederId);
+      const sub = feeder ? store.substations.get(feeder.substationId) : null;
+      const zone = sub ? store.zones.get(sub.zoneId) : null;
+      const meter = store.meters.get(ticket.meterId);
+      const customer = store.users.get(ticket.customerId);
+
+      let attachments: OutageAttachmentDto[] = [];
+      try {
+        attachments = await attachmentService.getAttachmentsForOutage(ticket.id, {
+          sub: technicianId,
+          name: technician.name,
+          email: technician.email,
+          role: UserRole.TECHNICIAN
+        });
+      } catch {
+        attachments = [];
+      }
+
+      result.push({
+        assignmentId: a.id,
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        status: ticket.status,
+        assignmentStatus: a.status,
+        faultType: ticket.faultType || FaultType.OTHER,
+        description: ticket.description,
+        landmark: ticket.landmark || null,
+        customerName: customer?.name,
+        customerPhone: customer?.phone || null,
+        meterNumber: meter?.meterNumber,
+        meterAddress: meter?.address,
+        feederId: ticket.feederId,
+        feederName: feeder?.name || 'Unknown Feeder',
+        feederCode: feeder?.code,
+        substationName: sub?.name,
+        zoneName: zone?.name,
+        reportedAt: ticket.reportedAt,
+        assignedAt: a.assignedAt,
+        acceptedAt: a.acceptedAt || null,
+        startedAt: a.startedAt || null,
+        completedAt: a.completedAt || null,
+        verifiedAttachmentsCount: attachments.filter((att) => att.isVerified).length,
+        attachments
+      });
+    }
+
+    result.sort((a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime());
+    return result;
+  }
+
+  /**
+   * Phase 20: Performance metrics and repair duration analytics for a technician.
+   */
+  getTechnicianStats(technicianId: string): TechnicianStatsDto {
+    const technician = store.users.get(technicianId);
+    if (!technician || technician.role !== UserRole.TECHNICIAN) {
+      throw new NotFoundError('Technician not found', 'TECHNICIAN_NOT_FOUND');
+    }
+
+    const assignments = Array.from(store.technicianAssignments.values()).filter(
+      (a) => a.technicianId === technicianId
+    );
+
+    const totalAssignedCount = assignments.length;
+    const completedAssignments = assignments.filter((a) => a.status === AssignmentStatus.COMPLETED);
+    const resolvedTicketsCount = completedAssignments.length;
+
+    const activeAssignmentsCount = assignments.filter(
+      (a) =>
+        a.status === AssignmentStatus.PENDING ||
+        a.status === AssignmentStatus.ACCEPTED ||
+        a.status === AssignmentStatus.IN_PROGRESS
+    ).length;
+
+    // Calculate today's resolved count (since 00:00:00 UTC today)
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayStartMs = todayStart.getTime();
+
+    const todayResolvedCount = completedAssignments.filter((a) => {
+      if (!a.completedAt) return false;
+      return new Date(a.completedAt).getTime() >= todayStartMs;
+    }).length;
+
+    // Calculate average repair duration in minutes
+    let totalDurationMinutes = 0;
+    let countedRepairs = 0;
+
+    for (const a of completedAssignments) {
+      if (a.completedAt) {
+        const endMs = new Date(a.completedAt).getTime();
+        const startMs = a.startedAt
+          ? new Date(a.startedAt).getTime()
+          : a.acceptedAt
+          ? new Date(a.acceptedAt).getTime()
+          : a.assignedAt
+          ? new Date(a.assignedAt).getTime()
+          : null;
+
+        if (startMs !== null && endMs >= startMs) {
+          const durationMinutes = (endMs - startMs) / 60000;
+          totalDurationMinutes += durationMinutes;
+          countedRepairs++;
+        }
+      }
+    }
+
+    const averageRepairDurationMinutes =
+      countedRepairs > 0 ? Math.round((totalDurationMinutes / countedRepairs) * 10) / 10 : 0;
+
+    return {
+      technicianId: technician.id,
+      technicianName: technician.name,
+      resolvedTicketsCount,
+      activeAssignmentsCount,
+      totalAssignedCount,
+      averageRepairDurationMinutes,
+      todayResolvedCount
+    };
+  }
+
+  /**
+   * Phase 20: Operator real-time dispatch queue with SLA calculation.
+   */
+  getDispatchQueue(
+    query: {
+      status?: OutageStatus;
+      zoneId?: string;
+      feederId?: string;
+      faultType?: FaultType;
+      unassignedOnly?: boolean;
+      page?: number;
+      pageSize?: number;
+    },
+    user: JwtPayload
+  ): { items: DispatchQueueItemDto[]; total: number } {
+    let tickets = Array.from(store.outageTickets.values());
+
+    // Role-based scoping for Zone Managers
+    if (user.role === UserRole.ZONE_MANAGER && user.zoneId) {
+      tickets = tickets.filter((t) => {
+        const feeder = store.feeders.get(t.feederId);
+        const sub = feeder ? store.substations.get(feeder.substationId) : null;
+        return sub?.zoneId === user.zoneId;
+      });
+    }
+
+    // Default to active unresolved tickets unless explicit status given
+    if (query.status) {
+      tickets = tickets.filter((t) => t.status === query.status);
+    } else {
+      tickets = tickets.filter(
+        (t) => t.status !== OutageStatus.RESOLVED && t.status !== OutageStatus.CANCELLED
+      );
+    }
+
+    if (query.zoneId) {
+      tickets = tickets.filter((t) => {
+        const feeder = store.feeders.get(t.feederId);
+        const sub = feeder ? store.substations.get(feeder.substationId) : null;
+        return sub?.zoneId === query.zoneId;
+      });
+    }
+
+    if (query.feederId) {
+      tickets = tickets.filter((t) => t.feederId === query.feederId);
+    }
+
+    if (query.faultType) {
+      tickets = tickets.filter((t) => t.faultType === query.faultType);
+    }
+
+    const nowMs = Date.now();
+    const queueItems: DispatchQueueItemDto[] = [];
+
+    for (const ticket of tickets) {
+      const assignments = Array.from(store.technicianAssignments.values()).filter(
+        (a) => a.ticketId === ticket.id
+      );
+      const activeAssignment = assignments.find(
+        (a) =>
+          a.status === AssignmentStatus.PENDING ||
+          a.status === AssignmentStatus.ACCEPTED ||
+          a.status === AssignmentStatus.IN_PROGRESS
+      );
+
+      if (query.unassignedOnly && activeAssignment) {
+        continue;
+      }
+
+      const assignedTech = activeAssignment ? store.users.get(activeAssignment.technicianId) : null;
+      const feeder = store.feeders.get(ticket.feederId);
+      const sub = feeder ? store.substations.get(feeder.substationId) : null;
+      const zone = sub ? store.zones.get(sub.zoneId) : null;
+      const meter = store.meters.get(ticket.meterId);
+      const customer = store.users.get(ticket.customerId);
+
+      const reportedMs = new Date(ticket.reportedAt).getTime();
+      const minutesWaiting = Math.max(0, Math.round((nowMs - reportedMs) / 60000));
+      const isSlaBreached = minutesWaiting >= 120 && ticket.status !== OutageStatus.RESOLVED;
+
+      queueItems.push({
+        ticketId: ticket.id,
+        ticketNumber: ticket.ticketNumber,
+        status: ticket.status,
+        faultType: ticket.faultType || FaultType.OTHER,
+        description: ticket.description,
+        landmark: ticket.landmark || null,
+        feederId: ticket.feederId,
+        feederName: feeder?.name || 'Unknown Feeder',
+        feederCode: feeder?.code,
+        substationName: sub?.name,
+        zoneId: zone?.id,
+        zoneName: zone?.name,
+        meterNumber: meter?.meterNumber,
+        customerPhone: customer?.phone || null,
+        reportedAt: ticket.reportedAt,
+        minutesWaiting,
+        assignedTechnician: assignedTech
+          ? {
+              id: assignedTech.id,
+              name: assignedTech.name,
+              phone: assignedTech.phone || null,
+              status: activeAssignment!.status
+            }
+          : null,
+        isSlaBreached
+      });
+    }
+
+    // Sort: oldest reported first (longest wait time first)
+    queueItems.sort((a, b) => new Date(a.reportedAt).getTime() - new Date(b.reportedAt).getTime());
+
+    const total = queueItems.length;
+    const page = query.page || 1;
+    const pageSize = query.pageSize || 20;
+    const paginated = queueItems.slice((page - 1) * pageSize, page * pageSize);
+
+    return { items: paginated, total };
+  }
+
+  /**
+   * Phase 20: Operator technician roster and workload overview.
+   */
+  getTechnicianRoster(zoneId?: string): TechnicianRosterItemDto[] {
+    let techs = Array.from(store.users.values()).filter(
+      (u) => u.role === UserRole.TECHNICIAN && u.status === UserStatus.ACTIVE && !u.deletedAt
+    );
+
+    if (zoneId) {
+      techs = techs.filter((u) => u.assignedZoneId === zoneId);
+    }
+
+    const roster: TechnicianRosterItemDto[] = techs.map((tech) => {
+      const assignments = Array.from(store.technicianAssignments.values()).filter(
+        (a) => a.technicianId === tech.id
+      );
+
+      const activeAssignments = assignments.filter(
+        (a) =>
+          a.status === AssignmentStatus.PENDING ||
+          a.status === AssignmentStatus.ACCEPTED ||
+          a.status === AssignmentStatus.IN_PROGRESS
+      );
+      const activeAssignmentsCount = activeAssignments.length;
+      const isAvailable = activeAssignmentsCount < 3;
+
+      const inProgressAssignment =
+        assignments.find((a) => a.status === AssignmentStatus.IN_PROGRESS) ||
+        assignments.find((a) => a.status === AssignmentStatus.ACCEPTED);
+
+      let currentTask: TechnicianRosterItemDto['currentTask'] = null;
+      if (inProgressAssignment) {
+        const tkt = store.outageTickets.get(inProgressAssignment.ticketId);
+        const fdr = tkt ? store.feeders.get(tkt.feederId) : null;
+        if (tkt) {
+          currentTask = {
+            ticketId: tkt.id,
+            ticketNumber: tkt.ticketNumber,
+            status: tkt.status,
+            feederName: fdr?.name || 'Unknown Feeder',
+            startedAt: inProgressAssignment.startedAt || inProgressAssignment.acceptedAt || null
+          };
+        }
+      }
+
+      const completedAssignments = assignments
+        .filter((a) => a.status === AssignmentStatus.COMPLETED && a.completedAt)
+        .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
+      const lastCompletedAt =
+        completedAssignments.length > 0 ? completedAssignments[0].completedAt! : null;
+
+      const zone = tech.assignedZoneId ? store.zones.get(tech.assignedZoneId) : null;
+
+      return {
+        id: tech.id,
+        name: tech.name,
+        email: tech.email,
+        phone: tech.phone || null,
+        status: tech.status,
+        assignedZoneId: tech.assignedZoneId || null,
+        zoneName: zone?.name || null,
+        activeAssignmentsCount,
+        isAvailable,
+        currentTask,
+        lastCompletedAt
+      };
+    });
+
+    roster.sort((a, b) => {
+      if (a.activeAssignmentsCount !== b.activeAssignmentsCount) {
+        return a.activeAssignmentsCount - b.activeAssignmentsCount;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    return roster;
+  }
+
+  /**
+   * Phase 20: Reassigns an in-flight outage ticket to a different technician.
+   */
+  async reassignTechnician(
+    ticketId: string,
+    newTechnicianId: string,
+    actorId: string,
+    reason: string
+  ): Promise<OutageDetailDto> {
+    const ticket = store.outageTickets.get(ticketId);
+    if (!ticket) {
+      throw new NotFoundError('Outage ticket not found', 'TICKET_NOT_FOUND');
+    }
+
+    if (ticket.status === OutageStatus.RESOLVED || ticket.status === OutageStatus.CANCELLED) {
+      throw new AppError(
+        `Cannot reassign a ticket in terminal state ${ticket.status}`,
+        409,
+        'INVALID_STATE_TRANSITION'
+      );
+    }
+
+    const newTech = store.users.get(newTechnicianId);
+    if (
+      !newTech ||
+      newTech.deletedAt ||
+      newTech.status !== UserStatus.ACTIVE ||
+      newTech.role !== UserRole.TECHNICIAN
+    ) {
+      throw new BadRequestError('Selected user is not an active technician', 'INVALID_TECHNICIAN');
+    }
+
+    const feeder = store.feeders.get(ticket.feederId);
+    const sub = feeder ? store.substations.get(feeder.substationId) : null;
+    const ticketZoneId = sub?.zoneId;
+
+    const assigner = store.users.get(actorId);
+    const isGlobalAdmin = assigner?.role === UserRole.ADMIN;
+
+    if (
+      newTech.assignedZoneId &&
+      ticketZoneId &&
+      newTech.assignedZoneId !== ticketZoneId &&
+      !isGlobalAdmin
+    ) {
+      throw new BadRequestError(
+        `Technician ${newTech.name} is assigned to zone ${newTech.assignedZoneId}, but ticket is in zone ${ticketZoneId}`,
+        'ZONE_MISMATCH'
+      );
+    }
+
+    const nowISO = new Date().toISOString();
+
+    for (const a of store.technicianAssignments.values()) {
+      if (
+        a.ticketId === ticket.id &&
+        (a.status === AssignmentStatus.PENDING ||
+          a.status === AssignmentStatus.ACCEPTED ||
+          a.status === AssignmentStatus.IN_PROGRESS)
+      ) {
+        a.status = AssignmentStatus.REASSIGNED;
+      }
+    }
+
+    const assignmentId = `asgn_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const assignment: TechnicianAssignmentRecord = {
+      id: assignmentId,
+      ticketId: ticket.id,
+      technicianId: newTechnicianId,
+      assignedById: actorId,
+      status: AssignmentStatus.PENDING,
+      assignedAt: nowISO
+    };
+    store.technicianAssignments.set(assignmentId, assignment);
+
+    const prevStatus = ticket.status;
+    ticket.status = OutageStatus.ASSIGNED;
+    ticket.assignedAt = nowISO;
+    ticket.updatedAt = nowISO;
+
+    const histId = `hist_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    store.outageStatusHistories.set(histId, {
+      id: histId,
+      ticketId: ticket.id,
+      previousStatus: prevStatus,
+      newStatus: OutageStatus.ASSIGNED,
+      changedById: actorId,
+      notes: `Reassigned to ${newTech.name}: ${reason}`,
+      createdAt: nowISO
+    });
+
+    if (newTech.phone) {
+      const dispatchTemplate = NotificationTemplates.technicianDispatchedTech(
+        feeder?.name || 'Assigned Feeder',
+        ticket.ticketNumber
+      );
+      await notificationService.createNotification(
+        newTech.id,
+        dispatchTemplate.title,
+        dispatchTemplate.message,
+        NotificationType.TECHNICIAN_DISPATCHED,
+        { ticketId: ticket.id, feederId: ticket.feederId, reassigned: true },
+        `reassign:${ticket.id}:${newTech.id}`
+      );
+    }
+
+    socketEmitter.emitTicketStatusChanged({
+      ticketId: ticket.id,
+      customerId: ticket.customerId,
+      status: ticket.status,
+      updatedAt: nowISO
+    });
+
+    return this.formatTicketDetail(ticket);
   }
 }
 
