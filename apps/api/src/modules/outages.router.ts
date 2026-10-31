@@ -3,6 +3,7 @@ import {
   outageQuerySchema,
   cancelTicketSchema,
   assignTechnicianSchema,
+  reassignTechnicianSchema,
   UserRole,
   OutageStatus,
   JwtPayload
@@ -158,6 +159,27 @@ outagesRouter.post(
   async (req: any, res, next) => {
     try {
       const result = await outageService.autoAssignTechnician(req.params.id, req.user.sub);
+      return successResponse(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// 7. POST /api/v1/outages/:id/reassign - Reassign in-flight ticket to different technician
+outagesRouter.post(
+  ['/outages/:id/reassign', '/v1/outages/:id/reassign'],
+  authenticateUser,
+  requireRoles(UserRole.POWER_OPERATOR, UserRole.ADMIN, UserRole.ZONE_MANAGER),
+  async (req: any, res, next) => {
+    try {
+      const { technicianId, reason } = reassignTechnicianSchema.parse(req.body);
+      const result = await outageService.reassignTechnician(
+        req.params.id,
+        technicianId,
+        req.user.sub,
+        reason
+      );
       return successResponse(res, result);
     } catch (err) {
       next(err);

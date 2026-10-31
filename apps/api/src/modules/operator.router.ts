@@ -6,6 +6,8 @@ import {
   assignTechnicianSchema,
   cancelTicketSchema,
   activeOutagesQuerySchema,
+  dispatchQueueQuerySchema,
+  reassignTechnicianSchema,
   UserRole,
   FeederStatus,
   OutageStatus,
@@ -388,6 +390,62 @@ operatorRouter.post(
       const result = await outageService.transitionTicket(
         req.params.id,
         OutageStatus.CANCELLED,
+        req.user.sub,
+        reason
+      );
+      return successResponse(res, result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Phase 20: GET /api/v1/operator/dispatch/queue
+operatorRouter.get(
+  ['/operator/dispatch/queue', '/v1/operator/dispatch/queue', '/operators/dispatch/queue'],
+  opAuth,
+  (req: any, res, next) => {
+    try {
+      const query = dispatchQueueQuerySchema.parse(req.query);
+      const result = outageService.getDispatchQueue(query, req.user);
+      return paginatedResponse(res, result.items, query.page || 1, query.pageSize || 20, result.total);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Phase 20: GET /api/v1/operator/technicians
+operatorRouter.get(
+  ['/operator/technicians', '/v1/operator/technicians', '/operators/technicians'],
+  opAuth,
+  (req: any, res, next) => {
+    try {
+      const zoneId =
+        (req.query.zoneId as string) ||
+        (req.user.role === UserRole.ZONE_MANAGER ? req.user.zoneId : undefined);
+      const roster = outageService.getTechnicianRoster(zoneId);
+      return successResponse(res, roster);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Phase 20: POST /api/v1/operator/outages/:id/reassign
+operatorRouter.post(
+  [
+    '/operator/outages/:id/reassign',
+    '/v1/operator/outages/:id/reassign',
+    '/operators/outage-reports/:id/reassign'
+  ],
+  opAuth,
+  async (req: any, res, next) => {
+    try {
+      const { technicianId, reason } = reassignTechnicianSchema.parse(req.body);
+      const result = await outageService.reassignTechnician(
+        req.params.id,
+        technicianId,
         req.user.sub,
         reason
       );
