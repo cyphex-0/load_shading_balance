@@ -230,15 +230,19 @@ const handleUploadPhoto = (req: any, res: any, next: any) => {
   const ticketId = req.params.id || req.body.ticketId;
   const attachmentId = `att_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+  const now = new Date().toISOString();
   const attachment: OutageAttachmentRecord = {
     id: attachmentId,
     ticketId: ticketId || 'unlinked',
     uploaderId: req.user.sub,
+    storageKey: `repair-photos/${ticketId || 'unlinked'}/${req.file.filename}`,
     fileUrl: `/uploads/${req.file.filename}`,
     fileName: req.file.originalname,
     fileType: req.file.mimetype,
     fileSize: req.file.size,
-    createdAt: new Date().toISOString()
+    isVerified: true,
+    verifiedAt: now,
+    createdAt: now
   };
 
   store.outageAttachments.set(attachmentId, attachment);

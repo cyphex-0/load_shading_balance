@@ -166,10 +166,14 @@ export interface OutageAttachmentRecord {
   id: string;
   ticketId: string;
   uploaderId: string;
+  storageKey: string;
   fileUrl: string;
   fileName: string;
   fileType: string;
   fileSize: number;
+  checksum?: string | null;
+  isVerified: boolean;
+  verifiedAt?: string | null;
   createdAt: string;
 }
 
