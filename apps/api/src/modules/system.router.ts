@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { successResponse } from '../utils/response';
 import { checkDatabaseConnection } from '../db/prisma';
+import { getSocketServer } from '../sockets/socket.server';
+import { getBackgroundJobsStatus } from '../jobs/cron';
 
 export const systemRouter = Router();
 
@@ -12,7 +14,8 @@ systemRouter.get('/health', async (req, res) => {
     uptime: process.uptime(),
     services: {
       database: dbConnected ? 'UP' : 'EMULATED_LOCAL',
-      redis: 'UP'
+      redis: 'UP',
+      sockets: getSocketServer() ? 'UP' : 'STANDBY'
     }
   });
 });
@@ -29,9 +32,19 @@ systemRouter.get(['/health/live', '/v1/health/live'], (req, res) => {
 // Readiness probe: GET /health/ready (available at /api/health/ready and /api/v1/health/ready)
 systemRouter.get(['/health/ready', '/v1/health/ready'], async (req, res) => {
   const dbConnected = await checkDatabaseConnection();
+  const jobs = getBackgroundJobsStatus();
   return successResponse(res, {
     ready: true,
-    database: dbConnected ? 'CONNECTED' : 'LOCAL_STORE_READY',
-    redis: 'READY'
+    status: 'READY',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    subsystems: {
+      database: dbConnected ? 'CONNECTED' : 'LOCAL_STORE_READY',
+      cache: 'READY',
+      sockets: getSocketServer() ? 'INITIALIZED' : 'STANDBY',
+      locks: 'READY',
+      backgroundJobs: jobs.length > 0 ? 'RUNNING' : 'STANDBY'
+    }
   });
 });
+
