@@ -1027,5 +1027,32 @@ export interface SocketServerStats {
   rooms: string[];
 }
 
+// ============================================================================
+// Phase 24: Background Jobs, Distributed Locks & Simulation DTOs
+// ============================================================================
+
+export interface BackgroundJobStatusDto {
+  name: string;
+  schedule: string;
+  lockKey: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastRunDurationMs: number | null;
+  lastRunStatus: 'SUCCESS' | 'ERROR' | 'SKIPPED_LOCKED' | 'IDLE';
+  lastErrorMessage: string | null;
+  totalRuns: number;
+  isRunning: boolean;
+}
+
+export interface JobTriggerResponseDto {
+  jobName: string;
+  triggered: boolean;
+  executedAt: string;
+  status: 'SUCCESS' | 'ERROR' | 'SKIPPED_LOCKED';
+  message: string;
+  durationMs?: number;
+}
+
+
 
 
