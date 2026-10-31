@@ -39,6 +39,7 @@ import {
 } from '../utils/response';
 import { toSafeUser } from '../db/helpers';
 import { adminService } from '../services/admin.service';
+import { getSocketServerStats } from '../sockets/socket.server';
 
 export const adminRouter = Router();
 
@@ -941,3 +942,19 @@ adminRouter.get(
   ['/admin/notifications', '/v1/admin/notifications'],
   handleGetAdminNotifications
 );
+
+// GET /api/v1/admin/socket/stats
+const handleGetSocketStats = (_req: any, res: any, next: any) => {
+  try {
+    const stats = getSocketServerStats();
+    return successResponse(res, stats);
+  } catch (err) {
+    next(err);
+  }
+};
+
+adminRouter.get(
+  ['/admin/socket/stats', '/v1/admin/socket/stats'],
+  handleGetSocketStats
+);
+

@@ -1,6 +1,7 @@
 import { NotificationType, DeliveryStatus } from '@load-shedding/shared';
 import { store, NotificationRecord, NotificationDeliveryLogRecord } from '../db/store';
 import { smsService } from './sms.service';
+import { socketEmitter } from '../sockets/socket.server';
 import { logger } from '../utils/logger';
 
 export class NotificationService {
@@ -41,6 +42,17 @@ export class NotificationService {
       createdAt: new Date().toISOString()
     };
     store.notifications.set(id, notification);
+
+    // Emit real-time WebSocket event to recipient's private room
+    socketEmitter.emitNotificationNew({
+      id,
+      userId,
+      title,
+      message,
+      type,
+      channel: 'IN_APP',
+      createdAt: notification.createdAt
+    });
 
     // 2. Queue SMS if recipient user has a phone number
     const user = store.users.get(userId);
