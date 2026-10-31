@@ -355,3 +355,28 @@ export const completeAttachmentUploadSchema = z.object({
   checksum: z.string().optional()
 });
 
+// ============================================================================
+// Phase 20: Technician Workflow, Dispatch Oversight & Ticket Read Models
+// ============================================================================
+
+export const technicianAssignmentsQuerySchema = paginationQuerySchema.extend({
+  status: z.string().optional()
+});
+
+export const dispatchQueueQuerySchema = paginationQuerySchema.extend({
+  status: z.nativeEnum(OutageStatus).optional(),
+  zoneId: z.string().optional(),
+  feederId: z.string().optional(),
+  faultType: z.nativeEnum(FaultType).optional(),
+  unassignedOnly: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .transform((v) => v === true || v === 'true')
+    .optional()
+});
+
+export const reassignTechnicianSchema = z.object({
+  technicianId: z.string().min(1, 'Technician ID is required'),
+  reason: z.string().min(3, 'Reassignment reason is required (minimum 3 characters)')
+});
+
+

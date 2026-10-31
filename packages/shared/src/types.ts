@@ -705,3 +705,91 @@ export interface OutageAttachmentDto {
   createdAt: string;
 }
 
+// ============================================================================
+// Phase 20: Technician Workflow, Dispatch Oversight & Ticket Read Models
+// ============================================================================
+
+export interface TechnicianStatsDto {
+  technicianId: string;
+  technicianName: string;
+  resolvedTicketsCount: number;
+  activeAssignmentsCount: number;
+  totalAssignedCount: number;
+  averageRepairDurationMinutes: number;
+  todayResolvedCount: number;
+}
+
+export interface TechnicianAssignmentDto {
+  assignmentId: string;
+  ticketId: string;
+  ticketNumber: string;
+  status: OutageStatus;
+  assignmentStatus: AssignmentStatus;
+  faultType: FaultType;
+  description: string;
+  landmark?: string | null;
+  customerName?: string;
+  customerPhone?: string | null;
+  meterNumber?: string;
+  meterAddress?: string;
+  feederId: string;
+  feederName: string;
+  feederCode?: string;
+  substationName?: string;
+  zoneName?: string;
+  reportedAt: string;
+  assignedAt: string;
+  acceptedAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  verifiedAttachmentsCount: number;
+  attachments: OutageAttachmentDto[];
+}
+
+export interface DispatchQueueItemDto {
+  ticketId: string;
+  ticketNumber: string;
+  status: OutageStatus;
+  faultType: FaultType;
+  description: string;
+  landmark?: string | null;
+  feederId: string;
+  feederName: string;
+  feederCode?: string;
+  substationName?: string;
+  zoneId?: string;
+  zoneName?: string;
+  meterNumber?: string;
+  customerPhone?: string | null;
+  reportedAt: string;
+  minutesWaiting: number;
+  assignedTechnician?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    status: AssignmentStatus;
+  } | null;
+  isSlaBreached: boolean;
+}
+
+export interface TechnicianRosterItemDto {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  status: UserStatus;
+  assignedZoneId?: string | null;
+  zoneName?: string | null;
+  activeAssignmentsCount: number;
+  isAvailable: boolean;
+  currentTask?: {
+    ticketId: string;
+    ticketNumber: string;
+    status: OutageStatus;
+    feederName: string;
+    startedAt?: string | null;
+  } | null;
+  lastCompletedAt?: string | null;
+}
+
+
