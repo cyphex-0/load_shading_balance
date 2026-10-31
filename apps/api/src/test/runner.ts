@@ -12,6 +12,7 @@ import {
   ScheduleStatus,
   OutageStatus,
   FeederStatus,
+  UpgradeRequestStatus,
   paginationQuerySchema,
   NotificationType,
   DeliveryStatus,
@@ -4067,6 +4068,283 @@ const runSuite = async () => {
     assert(
       reassignedHistory !== undefined,
       'Operator In-Flight Reassignment: Status history accurately records reassignment audit trail with operator reason'
+    );
+
+    // ========================================================================
+    // Test 28: Phase 21 — Zone Manager APIs, Analytics & Infrastructure Upgrades
+    // ========================================================================
+    logger.info('\n--- Test 28: Phase 21 Zone Manager Oversight & Analytics ---');
+
+    // Authenticate Dhanmondi Zone Manager
+    const p21MgrLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'manager.dhanmondi@grid.gov.bd',
+      password: 'Password123!'
+    });
+    assert(p21MgrLogin.status === 200, 'Phase 21: Dhanmondi Zone Manager logs in successfully');
+    const p21MgrToken = p21MgrLogin.body.data.token;
+
+    // Seed test data for Mirpur zone to verify strict horizontal isolation
+    const p21Now = new Date().toISOString();
+    const mirpurTicket: any = {
+      id: 'tkt_p21_mirpur_leak',
+      ticketNumber: 'TKT-P21-MIR-01',
+      customerId: 'usr_cust_1',
+      meterId: 'mtr_dhn_1',
+      feederId: 'fdr_mir_1',
+      faultType: 'CABLE_FAULT',
+      description: 'Underground fault on Mirpur sector 10',
+      status: OutageStatus.REPORTED,
+      reportedAt: p21Now,
+      createdAt: p21Now,
+      updatedAt: p21Now
+    };
+    store.outageTickets.set(mirpurTicket.id, mirpurTicket);
+
+    const dhanmondiTicket: any = {
+      id: 'tkt_p21_dhanmondi_fault',
+      ticketNumber: 'TKT-P21-DHN-01',
+      customerId: 'usr_cust_1',
+      meterId: 'mtr_dhn_1',
+      feederId: 'fdr_dhn_1',
+      faultType: 'TRANSFORMER',
+      description: 'Distribution transformer burnt in Dhanmondi',
+      status: OutageStatus.REPORTED,
+      reportedAt: p21Now,
+      createdAt: p21Now,
+      updatedAt: p21Now
+    };
+    store.outageTickets.set(dhanmondiTicket.id, dhanmondiTicket);
+
+    // 28a. Endpoint 44: GET /api/v1/zone-managers/me/feeders (SCADA Grid Table)
+    const p21FeedersRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/feeders',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21FeedersRes.status === 200 &&
+      p21FeedersRes.body.success === true &&
+      p21FeedersRes.body.data.zone.id === 'zn_dhanmondi' &&
+      Array.isArray(p21FeedersRes.body.data.feeders) &&
+      p21FeedersRes.body.data.feeders.length >= 1,
+      'Endpoint 44: GET /api/v1/zone-managers/me/feeders returns SCADA grid table scoped to manager zone'
+    );
+    const dhnFeederItem = p21FeedersRes.body.data.feeders.find((f: any) => f.id === 'fdr_dhn_1');
+    assert(
+      dhnFeederItem &&
+      dhnFeederItem.substationName &&
+      typeof dhnFeederItem.connectedMetersCount === 'number' &&
+      typeof dhnFeederItem.openTicketsCount === 'number',
+      'Endpoint 44: Feeder rows enriched with substation, connected meters, and open tickets count'
+    );
+
+    // Test search filter
+    const p21FeedersSearchRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/feeders?search=road',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21FeedersSearchRes.status === 200 &&
+      Array.isArray(p21FeedersSearchRes.body.data.feeders),
+      'Endpoint 44: Search query filter matches feeder names and codes'
+    );
+
+    // 28b. Endpoint 45: GET /api/v1/zone-managers/me/tickets (District Outages with zero cross-zone leakage)
+    const p21TicketsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/tickets',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21TicketsRes.status === 200 &&
+      Array.isArray(p21TicketsRes.body.data),
+      'Endpoint 45: GET /api/v1/zone-managers/me/tickets returns district outage tickets'
+    );
+    const hasDhanmondiTicket = p21TicketsRes.body.data.some((t: any) => t.id === dhanmondiTicket.id);
+    const hasMirpurTicket = p21TicketsRes.body.data.some((t: any) => t.id === mirpurTicket.id);
+    assert(
+      hasDhanmondiTicket && !hasMirpurTicket,
+      'Horizontal Zone Isolation: Zone Manager receives tickets from their zone only (Mirpur tickets excluded)'
+    );
+
+    // 28c. Endpoint 46: GET /api/v1/zone-managers/me/technicians (Technician Roster)
+    const p21TechRosterRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/technicians',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21TechRosterRes.status === 200 &&
+      Array.isArray(p21TechRosterRes.body.data) &&
+      p21TechRosterRes.body.data.every((t: any) => t.assignedZoneId === 'zn_dhanmondi'),
+      'Endpoint 46: GET /api/v1/zone-managers/me/technicians returns field roster strictly within assigned zone'
+    );
+
+    // 28d. Endpoint 47: GET /api/v1/zone-managers/me/analytics/feeder-failure-rate
+    const p21FailureRateRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/analytics/feeder-failure-rate',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21FailureRateRes.status === 200 &&
+      Array.isArray(p21FailureRateRes.body.data) &&
+      p21FailureRateRes.body.data.length >= 1,
+      'Endpoint 47: GET /api/v1/zone-managers/me/analytics/feeder-failure-rate returns ranked feeder failure list'
+    );
+    const topFailedFeeder = p21FailureRateRes.body.data[0];
+    assert(
+      topFailedFeeder.feederId &&
+      typeof topFailedFeeder.faultCount === 'number' &&
+      typeof topFailedFeeder.averageResolutionMinutes === 'number',
+      'Endpoint 47: Ranked failure list includes fault counts and downtime metrics'
+    );
+
+    // 28e. Endpoint 48: GET /api/v1/zone-managers/me/analytics/mttr
+    const p21MttrRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/analytics/mttr',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21MttrRes.status === 200 &&
+      p21MttrRes.body.success === true &&
+      p21MttrRes.body.data.zoneId === 'zn_dhanmondi' &&
+      typeof p21MttrRes.body.data.overallZoneMttrMinutes === 'number' &&
+      Array.isArray(p21MttrRes.body.data.technicians),
+      'Endpoint 48: GET /api/v1/zone-managers/me/analytics/mttr computes MTTR analytics for district'
+    );
+
+    // 28f. Endpoint 49: GET /api/v1/zone-managers/me/analytics/daily-deficit
+    // Seed a schedule slot and feeder assignment for Dhanmondi
+    const p21SchedId = `sched_p21_${Date.now()}`;
+    const p21SlotId = `slot_p21_${Date.now()}`;
+    const p21PlanningDate = new Date().toISOString().split('T')[0];
+
+    store.schedules.set(p21SchedId, {
+      id: p21SchedId,
+      planningDate: p21PlanningDate,
+      totalDeficitMW: 25,
+      status: ScheduleStatus.PUBLISHED,
+      createdById: 'usr_op_1',
+      createdAt: p21Now,
+      updatedAt: p21Now
+    });
+
+    store.scheduleSlots.set(p21SlotId, {
+      id: p21SlotId,
+      scheduleId: p21SchedId,
+      startTime: `${p21PlanningDate}T10:00:00.000Z`,
+      endTime: `${p21PlanningDate}T12:00:00.000Z`,
+      targetDeficitMW: 25,
+      actualDeficitMW: 25,
+      createdAt: p21Now
+    });
+
+    store.scheduleFeederAssignments.set(`sfa_p21_${Date.now()}`, {
+      id: `sfa_p21_${Date.now()}`,
+      slotId: p21SlotId,
+      feederId: 'fdr_dhn_1',
+      loadMW: 15,
+      createdAt: p21Now
+    });
+
+    const p21DeficitRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/analytics/daily-deficit',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p21DeficitRes.status === 200 &&
+      p21DeficitRes.body.success === true &&
+      p21DeficitRes.body.data.zoneId === 'zn_dhanmondi' &&
+      Array.isArray(p21DeficitRes.body.data.dailyBreakdown) &&
+      p21DeficitRes.body.data.totalDeficitShedMW >= 15,
+      'Endpoint 49: GET /api/v1/zone-managers/me/analytics/daily-deficit aggregates daily power deficit time-series'
+    );
+
+    // 28g. Endpoint 50: POST /api/v1/infrastructure-requests (Zone Boundary Validation)
+    // Attempting to submit upgrade request for Mirpur feeder from Dhanmondi manager must be rejected with 403
+    const p21CrossZoneUpgradeRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/infrastructure-requests',
+      {
+        feederId: 'fdr_mir_1', // In Mirpur, not Dhanmondi!
+        reason: 'Transformer burnouts due to chronic overload in cross zone',
+        proposedAction: 'Upgrade transformer from 200kVA to 400kVA',
+        supportingMetrics: { faultCount: 8 }
+      },
+      p21MgrToken
+    );
+    assert(
+      p21CrossZoneUpgradeRes.status === 403 &&
+      p21CrossZoneUpgradeRes.body.error.code === 'ZONE_ACCESS_DENIED',
+      'Endpoint 50: Cross-zone infrastructure upgrade request strictly blocked (403 ZONE_ACCESS_DENIED)'
+    );
+
+    // Submitting upgrade request for Dhanmondi feeder succeeds
+    const p21ValidUpgradeRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/infrastructure-requests',
+      {
+        feederId: 'fdr_dhn_1',
+        reason: 'Recurrent insulation breakdown and oil leak on Dhanmondi line 1',
+        proposedAction: 'Replace primary 33kV vacuum circuit breaker and step-down transformer',
+        supportingMetrics: { faultCount: 6, mttrMinutes: 120 }
+      },
+      p21MgrToken
+    );
+    assert(
+      p21ValidUpgradeRes.status === 201 &&
+      p21ValidUpgradeRes.body.data.status === UpgradeRequestStatus.PENDING &&
+      p21ValidUpgradeRes.body.data.feederId === 'fdr_dhn_1',
+      'Endpoint 50: POST /api/v1/infrastructure-requests creates pending upgrade request for in-zone feeder'
+    );
+
+    // 28h. Endpoint 51: GET /api/v1/infrastructure-requests (Zone Scoped vs Global Admin)
+    const mgrUpgradeListRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/infrastructure-requests',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      mgrUpgradeListRes.status === 200 &&
+      Array.isArray(mgrUpgradeListRes.body.data) &&
+      mgrUpgradeListRes.body.data.every((r: any) => r.feederId.startsWith('fdr_dhn')),
+      'Endpoint 51: GET /api/v1/infrastructure-requests scopes list to manager zone'
+    );
+
+    const adminUpgradeListRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/infrastructure-requests',
+      undefined,
+      adminToken
+    );
+    assert(
+      adminUpgradeListRes.status === 200 &&
+      Array.isArray(adminUpgradeListRes.body.data) &&
+      adminUpgradeListRes.body.data.length >= mgrUpgradeListRes.body.data.length,
+      'Endpoint 51: Global Admin sees all infrastructure upgrade requests across all zones'
     );
 
 
