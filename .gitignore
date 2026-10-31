@@ -47,3 +47,7 @@ apps/api/uploads/*
 # User specific exclusions
 don't_add_git/
 don't add git/
+
+# Python
+__pycache__/
+*.pyc
