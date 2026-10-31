@@ -229,6 +229,21 @@ const runSuite = async () => {
       );
       assert(repairRes.status === 200 && repairRes.body.data.status === 'REPAIRING', 'POST /api/technicians/me/assignments/:id/start-repair moves status to REPAIRING');
 
+      // Seed verified repair photo before resolution (Phase 19 Gate)
+      store.outageAttachments.set(`att_seed_${ticketId}`, {
+        id: `att_seed_${ticketId}`,
+        ticketId,
+        uploaderId: 'usr_tech_1',
+        storageKey: `repair-photos/${ticketId}/fuse_replaced.jpg`,
+        fileUrl: `/uploads/fuse_replaced.jpg`,
+        fileName: 'fuse_replaced.jpg',
+        fileType: 'image/jpeg',
+        fileSize: 102400,
+        isVerified: true,
+        verifiedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      });
+
       // 9d. Technician resolves (RESOLVED)
       const resolveRes = await request(
         serverUrl,
@@ -3208,6 +3223,20 @@ const runSuite = async () => {
       'State Machine: EN_ROUTE -> REPAIRING stamps repairingAt and marks assignment IN_PROGRESS'
     );
 
+    store.outageAttachments.set(`att_seed_${ticket1.id}`, {
+      id: `att_seed_${ticket1.id}`,
+      ticketId: ticket1.id,
+      uploaderId: techZoneP18B.id,
+      storageKey: `repair-photos/${ticket1.id}/line_rehung.jpg`,
+      fileUrl: `/uploads/line_rehung.jpg`,
+      fileName: 'line_rehung.jpg',
+      fileType: 'image/jpeg',
+      fileSize: 204800,
+      isVerified: true,
+      verifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    });
+
     const resolvedResult = await outageService.transitionTicket(
       ticket1.id,
       OutageStatus.RESOLVED,
@@ -3392,6 +3421,322 @@ const runSuite = async () => {
       idorRes.status === 404 && idorRes.body.error.code === 'TICKET_NOT_FOUND',
       'Canonical Outages IDOR: Customer accessing unowned ticket rejected with 404 TICKET_NOT_FOUND'
     );
+    // --- Phase 19 Verification Suite: Private Repair-Photo Storage & Resolution Evidence Gate ---
+    logger.info('\n--- Phase 19 Verification Suite: Private Repair-Photo Storage & Evidence Gate ---');
+
+    // Create a fresh test ticket and technician assignment for Phase 19
+    const p19Time = new Date().toISOString();
+    const fdrP19: any = {
+      id: 'fdr_p19_test',
+      substationId: 'sub_dhn_1',
+      name: 'P19 Evidence Feeder',
+      code: 'FDR-P19-01',
+      capacityMW: 18,
+      currentLoadMW: 8,
+      status: FeederStatus.UNEXPECTED_FAULT,
+      isCritical: false,
+      createdAt: p19Time,
+      updatedAt: p19Time
+    };
+    store.feeders.set(fdrP19.id, fdrP19);
+
+    const mtrP19: any = {
+      id: 'mtr_p19_test',
+      meterNumber: 'MTR-P19-001',
+      feederId: fdrP19.id,
+      address: 'P19 Station Road, Dhaka',
+      createdAt: p19Time,
+      updatedAt: p19Time
+    };
+    store.meters.set(mtrP19.id, mtrP19);
+
+    const ticketP19A: any = {
+      id: 'tkt_p19_evidence_a',
+      ticketNumber: 'TKT-P19-0001',
+      customerId: 'usr_customer_1',
+      meterId: mtrP19.id,
+      feederId: fdrP19.id,
+      faultType: FaultType.TRANSFORMER,
+      description: 'Blown capacitor unit leaking oil',
+      isPlanned: false,
+      status: OutageStatus.REPAIRING,
+      reportedAt: p19Time,
+      createdAt: p19Time,
+      updatedAt: p19Time
+    };
+    store.outageTickets.set(ticketP19A.id, ticketP19A);
+
+    const assignmentP19A: any = {
+      id: 'asgn_p19_a',
+      ticketId: ticketP19A.id,
+      technicianId: 'usr_tech_1',
+      assignedById: 'usr_admin_1',
+      status: AssignmentStatus.IN_PROGRESS,
+      assignedAt: p19Time,
+      acceptedAt: p19Time,
+      startedAt: p19Time
+    };
+    store.technicianAssignments.set(assignmentP19A.id, assignmentP19A);
+
+    // 1. File Type Rejection (400 INVALID_FILE_TYPE)
+    const badMimeRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${assignmentP19A.id}/attachments`,
+      {
+        fileName: 'report.pdf',
+        fileType: 'application/pdf',
+        fileSize: 102400
+      },
+      tech1Token
+    );
+    assert(
+      badMimeRes.status === 400,
+      'Upload Validation: Rejects non-JPEG/PNG file types with 400'
+    );
+
+    // 2. File Size Rejection (400 FILE_TOO_LARGE)
+    const tooLargeRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${assignmentP19A.id}/attachments`,
+      {
+        fileName: 'huge_photo.jpg',
+        fileType: 'image/jpeg',
+        fileSize: 6 * 1024 * 1024
+      },
+      tech1Token
+    );
+    assert(
+      tooLargeRes.status === 400,
+      'Upload Validation: Rejects photos exceeding 5MB limit with 400'
+    );
+
+    // 3. Unauthorized Technician Rejection (403 FORBIDDEN)
+    const unauthInitRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${assignmentP19A.id}/attachments`,
+      {
+        fileName: 'unauth_photo.jpg',
+        fileType: 'image/jpeg',
+        fileSize: 102400
+      },
+      tech2Token
+    );
+    assert(
+      unauthInitRes.status === 403,
+      'Upload Authorization: Technician not assigned to assignment rejected with 403'
+    );
+
+    // 4. Successful Signed Upload URL Initiation (201 Created)
+    const initUploadRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${assignmentP19A.id}/attachments`,
+      {
+        fileName: 'capacitor_repaired.jpg',
+        fileType: 'image/jpeg',
+        fileSize: 256000
+      },
+      tech1Token
+    );
+    assert(
+      initUploadRes.status === 201 &&
+      initUploadRes.body.success === true &&
+      initUploadRes.body.data.attachmentId !== undefined &&
+      initUploadRes.body.data.storageKey.startsWith(`repair-photos/${ticketP19A.id}/`) &&
+      initUploadRes.body.data.uploadUrl !== undefined,
+      'Signed Upload URL: Successfully generates short-lived upload URL with server-controlled storage key'
+    );
+
+    const attachmentP19Id = initUploadRes.body.data.attachmentId;
+    const uploadUrl = initUploadRes.body.data.uploadUrl;
+
+    // 5. Forged Completion Rejection (400 UPLOAD_VERIFICATION_FAILED)
+    const earlyCompleteRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/attachments/${attachmentP19Id}/complete`,
+      {},
+      tech1Token
+    );
+    assert(
+      earlyCompleteRes.status === 400 &&
+      earlyCompleteRes.body.error.code === 'UPLOAD_VERIFICATION_FAILED',
+      'Upload Verification: Forged completion of non-existent binary rejected with 400 UPLOAD_VERIFICATION_FAILED'
+    );
+
+    // 6. Direct Binary Upload to Signed URL (PUT /api/v1/storage/upload)
+    const testImageBinary = Buffer.from('FAKE_JPEG_IMAGE_BINARY_DATA_REPAIRED_CAPACITOR_EVIDENCE');
+    const binaryUploadRes = await request(
+      serverUrl,
+      'PUT',
+      uploadUrl,
+      testImageBinary,
+      undefined,
+      { 'Content-Type': 'image/jpeg' }
+    );
+    assert(
+      binaryUploadRes.status === 200,
+      'Direct Binary Upload: Successfully uploads image binary to signed upload URL'
+    );
+
+    // 7. Verify & Complete Upload (200 OK)
+    const verifyCompleteRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/attachments/${attachmentP19Id}/complete`,
+      {},
+      tech1Token
+    );
+    assert(
+      verifyCompleteRes.status === 200 &&
+      verifyCompleteRes.body.success === true &&
+      verifyCompleteRes.body.data.isVerified === true &&
+      verifyCompleteRes.body.data.verifiedAt !== null,
+      'Upload Verification: Verifies stored binary in storage and marks attachment isVerified=true'
+    );
+
+    // 8. Resolution Gate: Rejecting Resolution Without Verified Evidence on Ticket B
+    const ticketP19B: any = {
+      id: 'tkt_p19_no_evidence_b',
+      ticketNumber: 'TKT-P19-0002',
+      customerId: 'usr_customer_1',
+      meterId: mtrP19.id,
+      feederId: fdrP19.id,
+      faultType: FaultType.LINE_DOWN,
+      description: 'Downed conductor',
+      isPlanned: false,
+      status: OutageStatus.REPAIRING,
+      reportedAt: p19Time,
+      createdAt: p19Time,
+      updatedAt: p19Time
+    };
+    store.outageTickets.set(ticketP19B.id, ticketP19B);
+
+    const assignmentP19B: any = {
+      id: 'asgn_p19_b',
+      ticketId: ticketP19B.id,
+      technicianId: 'usr_tech_1',
+      assignedById: 'usr_admin_1',
+      status: AssignmentStatus.IN_PROGRESS,
+      assignedAt: p19Time
+    };
+    store.technicianAssignments.set(assignmentP19B.id, assignmentP19B);
+
+    let noEvidenceBlocked = false;
+    try {
+      await outageService.transitionTicket(
+        ticketP19B.id,
+        OutageStatus.RESOLVED,
+        'usr_tech_1',
+        'Attempting resolve with zero photo evidence'
+      );
+    } catch (e: any) {
+      if (e.statusCode === 422 && e.code === 'REPAIR_EVIDENCE_REQUIRED') {
+        noEvidenceBlocked = true;
+      }
+    }
+    assert(
+      noEvidenceBlocked,
+      'Resolution Gate: Attempting to resolve ticket without verified photo rejected with 422 REPAIR_EVIDENCE_REQUIRED'
+    );
+
+    // 9. Resolution Notes Gate: Rejecting Resolution With Empty Notes
+    let emptyNotesBlocked = false;
+    try {
+      await outageService.transitionTicket(
+        ticketP19A.id,
+        OutageStatus.RESOLVED,
+        'usr_tech_1',
+        ''
+      );
+    } catch (e: any) {
+      if (e.statusCode === 422 && e.code === 'RESOLUTION_NOTES_REQUIRED') {
+        emptyNotesBlocked = true;
+      }
+    }
+    assert(
+      emptyNotesBlocked,
+      'Resolution Gate: Attempting to resolve ticket with empty notes rejected with 422 RESOLUTION_NOTES_REQUIRED'
+    );
+
+    // 10. Resolution Success: Resolving Ticket A With Verified Evidence
+    const resolveSuccessResult = await outageService.transitionTicket(
+      ticketP19A.id,
+      OutageStatus.RESOLVED,
+      'usr_tech_1',
+      'Replaced capacitor bank, flushed oil, tested continuity.'
+    );
+    assert(
+      resolveSuccessResult.newStatus === OutageStatus.RESOLVED &&
+      resolveSuccessResult.ticket.resolvedAt !== null &&
+      resolveSuccessResult.ticket.resolutionNotes !== null,
+      'Resolution Gate: Ticket with verified repair evidence and notes successfully transitions to RESOLVED'
+    );
+
+    // 11. Cross-Ticket Attachment Isolation: Evidence from Ticket A cannot resolve Ticket B
+    let crossTicketBlocked = false;
+    try {
+      await outageService.transitionTicket(
+        ticketP19B.id,
+        OutageStatus.RESOLVED,
+        'usr_tech_1',
+        'Trying to resolve ticket B without uploading evidence for ticket B'
+      );
+    } catch (e: any) {
+      if (e.statusCode === 422 && e.code === 'REPAIR_EVIDENCE_REQUIRED') {
+        crossTicketBlocked = true;
+      }
+    }
+    assert(
+      crossTicketBlocked,
+      'Cross-Ticket Isolation: Verified evidence on Ticket A cannot satisfy resolution gate for Ticket B'
+    );
+
+    // 12. Scoped Attachment Retrieval (GET /api/v1/outages/:outageId/attachments)
+    const listAttachmentsRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/outages/${ticketP19A.id}/attachments`,
+      undefined,
+      tech1Token
+    );
+    assert(
+      listAttachmentsRes.status === 200 &&
+      listAttachmentsRes.body.success === true &&
+      Array.isArray(listAttachmentsRes.body.data) &&
+      listAttachmentsRes.body.data.length >= 1 &&
+      listAttachmentsRes.body.data[0].downloadUrl.includes('/storage/download?key='),
+      'Attachment Retrieval: GET /api/v1/outages/:id/attachments returns verified photos with short-lived signed download URLs'
+    );
+
+    // 13. Download Image Binary via Signed Download URL
+    const signedDownloadUrl = listAttachmentsRes.body.data[0].downloadUrl;
+    const downloadBinaryRes = await request(
+      serverUrl,
+      'GET',
+      signedDownloadUrl
+    );
+    assert(
+      downloadBinaryRes.status === 200,
+      'Signed Download URL: Successfully downloads image binary via signed download URL'
+    );
+
+    // 14. Access Control: Customer Restricted from Private Repair Photos (403 FORBIDDEN)
+    const customerForbiddenRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/outages/${ticketP19A.id}/attachments`,
+      undefined,
+      customerToken
+    );
+    assert(
+      customerForbiddenRes.status === 403,
+      'Access Control: Customer restricted from accessing internal technical repair photos (403 FORBIDDEN)'
+    );
+
 
 
   } catch (err: any) {
