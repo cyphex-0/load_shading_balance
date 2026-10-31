@@ -333,3 +333,25 @@ export const outageQuerySchema = paginationQuerySchema.extend({
   feederId: z.string().optional(),
   faultType: z.nativeEnum(FaultType).optional()
 });
+
+// ============================================================================
+// Phase 19: Private Repair-Photo & Evidence Schemas
+// ============================================================================
+
+export const initiateAttachmentUploadSchema = z.object({
+  fileName: z.string().min(1, 'File name is required'),
+  fileType: z.enum(['image/jpeg', 'image/png'], {
+    errorMap: () => ({ message: 'Only image/jpeg and image/png are allowed' })
+  }),
+  fileSize: z
+    .number()
+    .int('File size must be an integer')
+    .positive('File size must be positive')
+    .max(5 * 1024 * 1024, 'Maximum file size is 5MB'),
+  checksum: z.string().optional()
+});
+
+export const completeAttachmentUploadSchema = z.object({
+  checksum: z.string().optional()
+});
+

@@ -678,3 +678,30 @@ export interface AutoAssignResultDto {
   technicianName: string;
   assignedAt: string;
 }
+
+// ============================================================================
+// Phase 19: Private Repair-Photo & Evidence DTOs
+// ============================================================================
+
+export interface InitiateUploadResponseDto {
+  attachmentId: string;
+  storageKey: string;
+  uploadUrl: string;
+  expiresInSeconds: number;
+  headers?: Record<string, string>;
+}
+
+export interface OutageAttachmentDto {
+  id: string;
+  ticketId: string;
+  uploaderId: string;
+  uploaderName?: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  downloadUrl: string;
+  isVerified: boolean;
+  verifiedAt?: string | null;
+  createdAt: string;
+}
+
