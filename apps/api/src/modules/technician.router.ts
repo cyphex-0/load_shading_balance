@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import { resolveTicketSchema, UserRole, OutageStatus, AssignmentStatus, FeederStatus, NotificationType } from '@load-shedding/shared';
 import { store, OutageAttachmentRecord } from '../db/store';
 import { authenticateUser, requireRoles } from '../middleware/auth';
@@ -6,6 +6,7 @@ import { successResponse, AppError, ForbiddenError, NotFoundError } from '../uti
 import { uploadRepairPhoto } from '../middleware/upload';
 import { socketEmitter } from '../sockets/socket.server';
 import { notificationService } from '../services/notification.service';
+import { attachmentService } from '../services/attachment.service';
 
 export const technicianRouter = Router();
 
@@ -273,10 +274,19 @@ technicianRouter.post(
   handleUploadPhoto
 );
 
-// Endpoint 43: GET /api/v1/outages/:id/attachments
-technicianRouter.get('/v1/outages/:id/attachments', (req, res) => {
-  const attachments = Array.from(store.outageAttachments.values()).filter(
-    (a) => a.ticketId === req.params.id
-  );
-  return successResponse(res, attachments);
-});
+// Endpoint 43: Forward to canonical attachments service
+technicianRouter.get(
+  ['/outages/:id/attachments', '/v1/outages/:id/attachments'],
+  authenticateUser,
+  async (req: any, res: Response, next: NextFunction) => {
+    try {
+      const attachments = await attachmentService.getAttachmentsForOutage(
+        req.params.id,
+        req.user
+      );
+      return successResponse(res, attachments);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
