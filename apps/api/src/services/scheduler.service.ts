@@ -54,7 +54,7 @@ export class SchedulerService {
           name: f.name,
           code: f.code,
           capacityMW: f.capacityMW,
-          isCritical: f.isCritical,
+          isCritical: Boolean(f.isCritical),
           substationId: f.substationId,
           substationName: sub?.name || 'Unknown',
           zoneId: sub?.zoneId || null,

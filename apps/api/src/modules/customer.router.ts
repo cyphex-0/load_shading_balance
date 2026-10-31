@@ -454,6 +454,10 @@ const handleLinkMeter = (req: any, res: any, next: any) => {
     };
     store.customerMeters.set(linkId, newLink);
 
+    // Invalidate customer dashboard and schedule caches
+    cacheService.del(cacheService.getCustomerDashboardKey(req.user.sub)).catch(() => {});
+    cacheService.invalidateCustomerSchedules(req.user.sub).catch(() => {});
+
     return successResponse(
       res,
       {
@@ -495,6 +499,10 @@ customerRouter.delete('/customers/me/meters/:id', custAuth, (req: any, res) => {
       remaining[0].isPrimary = true;
     }
   }
+
+  // Invalidate customer dashboard and schedule caches
+  cacheService.del(cacheService.getCustomerDashboardKey(req.user.sub)).catch(() => {});
+  cacheService.invalidateCustomerSchedules(req.user.sub).catch(() => {});
 
   return successResponse(res, { message: 'Meter unlinked successfully' });
 });

@@ -4914,6 +4914,317 @@ const runSuite = async () => {
       'Admin Job Guard: Triggering non-existent background job returns 404 JOB_NOT_FOUND'
     );
 
+    // =========================================================================
+    // Test 32: Phase 25 - Final Integration, Security, Reliability & Release Gate
+    // =========================================================================
+    logger.info('\n--- Test 32: Phase 25 Final Integration, Security & Release Gate ---');
+
+    // 32a. Readiness Probe Deep Check (Health & Subsystems)
+    const readyRes = await request(serverUrl, 'GET', '/api/v1/health/ready');
+    assert(
+      readyRes.status === 200 &&
+      readyRes.body.data.ready === true &&
+      readyRes.body.data.status === 'READY' &&
+      readyRes.body.data.subsystems.backgroundJobs === 'RUNNING',
+      'Release Gate 32a: Readiness probe deep check reports all subsystems healthy and operational'
+    );
+
+    // 32b. End-to-End Multi-Tier Grid Provisioning (Zone -> Substation -> Feeder -> Meter)
+    const p25ZoneRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/zones',
+      { name: 'Sylhet Metro Zone', code: 'ZON-SYL-01', description: 'Northeast Region' },
+      adminToken
+    );
+    const p25ZoneId = p25ZoneRes.body.data.id;
+    const p25SubRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/substations',
+      { name: 'Amberkhana Substation', code: 'SUB-AMB-01', zoneId: p25ZoneId, capacityMW: 50 },
+      adminToken
+    );
+    const p25SubId = p25SubRes.body.data.id;
+    const p25FdrRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/feeders',
+      { name: 'Zindabazar Feeder', code: 'FDR-ZIN-01', substationId: p25SubId, capacityMW: 12, isCritical: false },
+      adminToken
+    );
+    const p25FdrId = p25FdrRes.body.data.id;
+    const p25MtrRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/meters',
+      { meterNumber: 'MTR-SYL-9901', feederId: p25FdrId, address: 'Zindabazar Point 1' },
+      adminToken
+    );
+    const p25MtrId = p25MtrRes.body.data.id;
+    assert(
+      p25ZoneRes.status === 201 && p25SubRes.status === 201 && p25FdrRes.status === 201 && p25MtrRes.status === 201,
+      'Release Gate 32b: Multi-tier grid hierarchy provisioning (Zone -> Substation -> Feeder -> Meter)'
+    );
+
+    // 32c. Customer Meter Binding & Dashboard Synthesis
+    const p25BindRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/meters',
+      { meterNumber: 'MTR-SYL-9901', nickname: 'Sylhet Office' },
+      customerToken
+    );
+    const p25DashRes = await request(serverUrl, 'GET', '/api/v1/customers/me/dashboard', undefined, customerToken);
+    assert(
+      p25BindRes.status === 201 &&
+      p25DashRes.status === 200 &&
+      p25DashRes.body.data.meters.some((m: any) => m.meterNumber === 'MTR-SYL-9901'),
+      'Release Gate 32c: Customer meter binding and multi-meter dashboard synthesis'
+    );
+
+    // 32d. Algorithmic Fair Rotation Schedule Draft & Idempotent Publish
+    const p25DraftRes = await request(
+      serverUrl,
+      'POST',
+      '/api/operator/schedules/draft',
+      {
+        planningDate: '2026-11-05',
+        deficitMW: 25,
+        startTime: '09:00',
+        endTime: '18:00',
+        slotDurationMinutes: 60
+      },
+      opToken
+    );
+    const p25SchedId = p25DraftRes.body.data.scheduleId || p25DraftRes.body.data.id;
+    const p25PublishRes = await request(
+      serverUrl,
+      'POST',
+      `/api/operator/schedules/${p25SchedId}/publish`,
+      {},
+      opToken,
+      { 'Idempotency-Key': 'key-p25-pub-1' }
+    );
+    assert(
+      p25DraftRes.status === 201 &&
+      p25PublishRes.status === 200 &&
+      p25PublishRes.body.data.schedule.status === 'PUBLISHED',
+      'Release Gate 32d: Algorithmic fair rotation draft generation and idempotent publication'
+    );
+
+    // 32e. Background Schedule Enforcer & Distributed Lock Execution
+    const p25EnforcerRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/admin/jobs/schedule-enforcer/trigger',
+      {},
+      adminToken
+    );
+    assert(
+      p25EnforcerRes.status === 200 && p25EnforcerRes.body.data.status === 'SUCCESS',
+      'Release Gate 32e: Background Schedule Enforcer executes with distributed lock and cache invalidation'
+    );
+
+    // 32f. Smart Outage Reporting & Conflict Resolution
+    const p25ReportRes = await request(
+      serverUrl,
+      'POST',
+      '/api/customers/me/outage-reports',
+      {
+        meterId: p25MtrId,
+        description: 'Transformer sparked and burned out'
+      },
+      customerToken
+    );
+    assert(
+      p25ReportRes.status === 201 &&
+      p25ReportRes.body.data.ticketCreated === true &&
+      p25ReportRes.body.data.ticket.ticketNumber !== undefined,
+      'Release Gate 32f: Smart outage report handled with conflict resolution engine'
+    );
+
+    // 32g. Technician Dispatch & Resolution Evidence Gate
+    const p25TechUserRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/users',
+      {
+        name: 'Sylhet Quick Response Tech',
+        email: 'sylhet.tech@grid.gov.bd',
+        phone: '+8801711223344',
+        role: UserRole.TECHNICIAN,
+        assignedZoneId: p25ZoneId,
+        password: 'Password123!'
+      },
+      adminToken
+    );
+    const p25TechLogin = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'sylhet.tech@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const p25TechToken = p25TechLogin.body.data.token;
+    const p25TechUserId = p25TechLogin.body.data.user.id;
+    const p25TicketId = p25ReportRes.body.data.ticket.id;
+
+    // Operator assigns ticket to Technician
+    const p25AssignRes = await request(
+      serverUrl,
+      'POST',
+      `/api/operators/outage-reports/${p25TicketId}/assign`,
+      { technicianId: p25TechUserId },
+      opToken
+    );
+    // Technician accepts assignment (EN_ROUTE)
+    const p25AcceptRes = await request(
+      serverUrl,
+      'POST',
+      `/api/technicians/me/assignments/${p25TicketId}/accept`,
+      {},
+      p25TechToken
+    );
+    // Technician starts repair (REPAIRING)
+    const p25RepairRes = await request(
+      serverUrl,
+      'POST',
+      `/api/technicians/me/assignments/${p25TicketId}/start-repair`,
+      {},
+      p25TechToken
+    );
+
+    // Attempt resolve without verified photo evidence -> 422 REPAIR_EVIDENCE_REQUIRED
+    const prematureResolve = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${p25TicketId}/resolve`,
+      { resolutionNotes: 'Fixed wire and restored power' },
+      p25TechToken
+    );
+
+    // Inject verified photo evidence attachment into store
+    const p25AttId = `att_p25_${Date.now()}`;
+    store.outageAttachments.set(p25AttId, {
+      id: p25AttId,
+      ticketId: p25TicketId,
+      uploaderId: p25TechUserId,
+      storageKey: `repair-photos/${p25TicketId}/fuse_fixed.jpg`,
+      fileUrl: `/uploads/${p25TicketId}_fuse_fixed.jpg`,
+      fileName: 'fuse_fixed.jpg',
+      fileSize: 1024 * 500,
+      fileType: 'image/jpeg',
+      isVerified: true,
+      verifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    } as any);
+
+    // Resolve with verified evidence attachment and compliant notes (>= 5 chars)
+    const validResolve = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${p25TicketId}/resolve`,
+      { resolutionNotes: 'Replaced blown drop-out fuse and restored phase C' },
+      p25TechToken
+    );
+    assert(
+      p25AssignRes.status === 200 &&
+      p25AcceptRes.status === 200 &&
+      p25RepairRes.status === 200 &&
+      prematureResolve.status === 422 &&
+      validResolve.status === 200 &&
+      validResolve.body.data.ticket.status === 'RESOLVED',
+      'Release Gate 32g: Technician resolution evidence gate (422 REPAIR_EVIDENCE_REQUIRED -> verified resolve)'
+    );
+
+    // 32h. Zone Manager District Analytics & Upgrade Request Submission
+    const p25MgrUserRes = await request(
+      serverUrl,
+      'POST',
+      '/api/admin/users',
+      {
+        name: 'Sylhet Zone Manager',
+        email: 'sylhet.manager@nationalgrid.gov.bd',
+        phone: '+8801799887766',
+        role: UserRole.ZONE_MANAGER,
+        assignedZoneId: p25ZoneId,
+        password: 'Password123!'
+      },
+      adminToken
+    );
+    const p25MgrLogin = await request(
+      serverUrl,
+      'POST',
+      '/api/auth/login',
+      { email: 'sylhet.manager@nationalgrid.gov.bd', password: 'Password123!' }
+    );
+    const p25MgrToken = p25MgrLogin.body.data.token;
+    const p25FailureRateRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/zone-managers/me/analytics/feeder-failure-rate',
+      undefined,
+      p25MgrToken
+    );
+    const p25UpgradeReqRes = await request(
+      serverUrl,
+      'POST',
+      '/api/v1/infrastructure-requests',
+      {
+        feederId: p25FdrId,
+        reason: 'Feeder recurrently trips under peak summer humidity',
+        proposedAction: 'Replace overhead feeder line and step-down transformer',
+        supportingMetrics: { faultCount: 5 }
+      },
+      p25MgrToken
+    );
+    assert(
+      p25FailureRateRes.status === 200 &&
+      p25UpgradeReqRes.status === 201 &&
+      p25UpgradeReqRes.body.data.status === 'PENDING',
+      'Release Gate 32h: Zone Manager empirical failure rate ranking & zone-scoped upgrade request submission'
+    );
+
+    // 32i. Admin Upgrade Decision, Terminal Immutability, and Forensic Audit Trail
+    const p25ReqId = p25UpgradeReqRes.body.data.id;
+    const p25ApprovalRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/infrastructure-requests/${p25ReqId}/status`,
+      { status: UpgradeRequestStatus.APPROVED, reviewNotes: 'Approved for Q1 capital budget' },
+      adminToken
+    );
+    const p25DoubleReview = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/infrastructure-requests/${p25ReqId}/status`,
+      { status: UpgradeRequestStatus.REJECTED, reviewNotes: 'Cannot change' },
+      adminToken
+    );
+    const p25AuditRes = await request(
+      serverUrl,
+      'GET',
+      `/api/v1/admin/audit-logs?action=REVIEW_INFRASTRUCTURE_REQUEST`,
+      undefined,
+      adminToken
+    );
+    assert(
+      p25ApprovalRes.status === 200 &&
+      p25DoubleReview.status === 409 &&
+      p25AuditRes.status === 200 &&
+      p25AuditRes.body.data.some((a: any) => a.entityId === p25ReqId),
+      'Release Gate 32i: Admin upgrade approval, terminal state lock (409), and forensic audit logging'
+    );
+
+    // 32j. System-Wide Security Invariance Audit
+    const p25MeRes = await request(serverUrl, 'GET', '/api/users/me', undefined, customerToken);
+    const p25AdminUsers = await request(serverUrl, 'GET', '/api/admin/users', undefined, adminToken);
+    const p25CustomerForbidden = await request(serverUrl, 'GET', '/api/v1/admin/audit-logs', undefined, customerToken);
+    assert(
+      (p25MeRes.body.data as any).passwordHash === undefined &&
+      p25AdminUsers.body.data.every((u: any) => u.passwordHash === undefined) &&
+      p25CustomerForbidden.status === 403,
+      'Release Gate 32j: Security Invariance: Zero password hash leakage and strict RBAC protection'
+    );
+
 
 
   } catch (err: any) {
