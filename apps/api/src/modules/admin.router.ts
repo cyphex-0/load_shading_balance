@@ -14,6 +14,8 @@ import {
   updateUserRoleSchema,
   updateUserStatusSchema,
   reviewInfrastructureRequestSchema,
+  auditLogsQuerySchema,
+  adminNotificationsQuerySchema,
   UserRole,
   UserStatus
 } from '@load-shedding/shared';
@@ -36,13 +38,22 @@ import {
   ConflictError
 } from '../utils/response';
 import { toSafeUser } from '../db/helpers';
+import { adminService } from '../services/admin.service';
 
 export const adminRouter = Router();
 
 // Guard admin routes strictly to ADMIN
-adminRouter.use('/admin', authenticateUser, requireRoles(UserRole.ADMIN));
-adminRouter.use('/v1/admin', authenticateUser, requireRoles(UserRole.ADMIN));
-adminRouter.use('/infrastructure-requests/:id/status', authenticateUser, requireRoles(UserRole.ADMIN));
+adminRouter.use(
+  [
+    '/admin',
+    '/v1/admin',
+    '/infrastructure-requests/:id/status',
+    '/v1/infrastructure-requests/:id/status',
+    '/v1/admin/upgrade-requests/:id'
+  ],
+  authenticateUser,
+  requireRoles(UserRole.ADMIN)
+);
 
 const logAudit = (actorId: string, action: string, entity: string, entityId?: string, details?: any) => {
   const auditId = `aud_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -855,64 +866,78 @@ adminRouter.post('/admin/users/:id/reactivate', (req: any, res) => {
 });
 
 // ==========================================
-// 6. UPGRADE APPROVAL (Endpoint 79)
+// 6. UPGRADE APPROVAL (Endpoint 81)
 // ==========================================
 
-// Endpoint 79: PATCH /api/infrastructure-requests/:id/status
-adminRouter.patch('/infrastructure-requests/:id/status', (req: any, res, next) => {
+// Endpoint 81: PATCH /api/v1/infrastructure-requests/:id/status
+const handleReviewUpgradeRequest = async (req: any, res: any, next: any) => {
   try {
     const { status, adminNotes } = reviewInfrastructureRequestSchema.parse(req.body);
-    const request = store.infrastructureRequests.get(req.params.id);
-    if (!request) throw new AppError('Infrastructure request not found', 404, 'REQUEST_NOT_FOUND');
-
-    request.status = status;
-    request.adminNotes = adminNotes || null;
-    request.reviewedById = req.user.sub;
-    request.reviewedAt = new Date().toISOString();
-    request.updatedAt = new Date().toISOString();
-
-    logAudit(req.user.sub, 'REVIEW_INFRASTRUCTURE_REQUEST', 'InfrastructureRequest', request.id, {
+    const result = await adminService.reviewInfrastructureRequest(
+      req.params.id,
       status,
-      adminNotes
-    });
-
-    return successResponse(res, request);
+      adminNotes,
+      req.user.sub,
+      req.ip
+    );
+    return successResponse(res, result);
   } catch (err) {
     next(err);
   }
-});
+};
+
+adminRouter.patch(
+  [
+    '/infrastructure-requests/:id/status',
+    '/v1/infrastructure-requests/:id/status',
+    '/v1/admin/upgrade-requests/:id'
+  ],
+  handleReviewUpgradeRequest
+);
 
 // ==========================================
 // 7. AUDIT & NOTIFICATIONS (Endpoints 80 - 81)
 // ==========================================
 
-// Endpoint 80: GET /api/admin/audit
-adminRouter.get('/admin/audit', (req, res) => {
-  let logs = Array.from(store.auditLogs.values())
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+// Endpoint 80: GET /api/v1/admin/audit-logs
+const handleGetAuditLogs = (req: any, res: any, next: any) => {
+  try {
+    const query = auditLogsQuerySchema.parse(req.query);
+    const result = adminService.getAuditLogs(query);
 
-  if (req.query.action) {
-    logs = logs.filter((l) => l.action.toLowerCase().includes((req.query.action as string).toLowerCase()));
+    if (req.query.page || req.query.pageSize) {
+      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+    }
+    return successResponse(res, result.items);
+  } catch (err) {
+    next(err);
   }
-  if (req.query.userId) {
-    logs = logs.filter((l) => l.actorId === req.query.userId);
+};
+
+adminRouter.get(
+  ['/admin/audit-logs', '/v1/admin/audit-logs', '/admin/audit', '/v1/admin/audit'],
+  handleGetAuditLogs
+);
+
+// GET /api/v1/admin/notifications
+const handleGetAdminNotifications = (req: any, res: any, next: any) => {
+  try {
+    const query = adminNotificationsQuerySchema.parse(req.query);
+    const result = adminService.getNotificationDeliveryLogs(query);
+
+    if (req.query.page || req.query.pageSize) {
+      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+    }
+    if (req.query.telemetry === 'true') {
+      return successResponse(res, result);
+    }
+    return successResponse(res, result.items);
+  } catch (err) {
+    next(err);
   }
+};
 
-  if (req.query.page || req.query.pageSize) {
-    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-    const pageSize = Math.max(1, parseInt(req.query.pageSize as string, 10) || 20);
-    const paginated = logs.slice((page - 1) * pageSize, page * pageSize);
-    return paginatedResponse(res, paginated, logs.length, page, pageSize);
-  }
-
-  return successResponse(res, logs.slice(0, 100));
-});
-
-// Endpoint 81: GET /api/admin/notifications
-adminRouter.get('/admin/notifications', (req, res) => {
-  const logs = Array.from(store.notificationDeliveryLogs.values())
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 100);
-
-  return successResponse(res, logs);
-});
+adminRouter.get(
+  ['/admin/notifications', '/v1/admin/notifications'],
+  handleGetAdminNotifications
+);
