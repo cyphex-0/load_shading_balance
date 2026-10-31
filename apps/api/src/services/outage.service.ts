@@ -83,6 +83,28 @@ export class OutageService {
     const previousStatus = ticket.status;
     this.validateTransition(previousStatus, targetStatus);
 
+    // Phase 19 Gate: Resolving requires non-empty notes AND at least one verified attachment!
+    if (targetStatus === OutageStatus.RESOLVED) {
+      if (!notes || notes.trim().length < 5) {
+        throw new AppError(
+          'Resolution notes are required (minimum 5 characters)',
+          422,
+          'RESOLUTION_NOTES_REQUIRED'
+        );
+      }
+
+      const hasVerifiedAttachment = Array.from(store.outageAttachments.values()).some(
+        (a) => a.ticketId === ticket.id && a.isVerified === true
+      );
+      if (!hasVerifiedAttachment) {
+        throw new AppError(
+          'Cannot resolve outage ticket without verified repair-photo evidence. Please upload and verify repair photo.',
+          422,
+          'REPAIR_EVIDENCE_REQUIRED'
+        );
+      }
+    }
+
     const nowISO = new Date().toISOString();
     ticket.status = targetStatus;
     ticket.updatedAt = nowISO;
