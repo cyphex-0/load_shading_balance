@@ -3737,6 +3737,338 @@ const runSuite = async () => {
       'Access Control: Customer restricted from accessing internal technical repair photos (403 FORBIDDEN)'
     );
 
+    // ============================================================================
+    // Phase 20: Technician APIs, Operator Dispatch Oversight & Ticket Read Models
+    // ============================================================================
+    logger.info('\n--- Phase 20 Verification Suite: Technician APIs, Dispatch Oversight & Read Models ---');
+
+    // Setup fresh test fixtures for Phase 20
+    const p20Now = new Date().toISOString();
+    const zoneP20: any = {
+      id: 'zn_p20_test',
+      name: 'P20 Test Zone',
+      code: 'ZN-P20',
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.zones.set(zoneP20.id, zoneP20);
+
+    const subP20: any = {
+      id: 'sub_p20_test',
+      name: 'P20 Test Substation',
+      code: 'SUB-P20',
+      zoneId: zoneP20.id,
+      capacityMW: 40,
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.substations.set(subP20.id, subP20);
+
+    const fdrP20: any = {
+      id: 'fdr_p20_test',
+      name: 'P20 Distribution Line',
+      code: 'FDR-P20-01',
+      substationId: subP20.id,
+      capacityMW: 20,
+      status: FeederStatus.UNEXPECTED_FAULT,
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.feeders.set(fdrP20.id, fdrP20);
+
+    const mtrP20: any = {
+      id: 'mtr_p20_test',
+      meterNumber: 'MTR-P20-001',
+      feederId: fdrP20.id,
+      address: 'P20 Tech Hub, Gulshan, Dhaka',
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.meters.set(mtrP20.id, mtrP20);
+
+    // Authenticate technicians for Phase 20 testing
+    const p20Tech1Login = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'tech1@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const p20Tech1Token = p20Tech1Login.body.data.token;
+    const p20Tech1User = p20Tech1Login.body.data.user;
+
+    const p20Tech2Login = await request(serverUrl, 'POST', '/api/auth/login', {
+      email: 'tech2@grid.gov.bd',
+      password: 'Password123!'
+    });
+    const p20Tech2Token = p20Tech2Login.body.data.token;
+    const p20Tech2User = p20Tech2Login.body.data.user;
+
+    store.users.get(p20Tech1User.id)!.assignedZoneId = zoneP20.id;
+    store.users.get(p20Tech2User.id)!.assignedZoneId = zoneP20.id;
+
+    const ticketP20A: any = {
+      id: 'tkt_p20_flow_a',
+      ticketNumber: 'TKT-P20-0001',
+      customerId: 'usr_cust_1',
+      meterId: mtrP20.id,
+      feederId: fdrP20.id,
+      faultType: 'TRANSFORMER_EXPLOSION',
+      description: 'Severe transformer oil leak on P20 line',
+      status: OutageStatus.ASSIGNED,
+      reportedAt: new Date(Date.now() - 150 * 60 * 1000).toISOString(),
+      assignedAt: p20Now,
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.outageTickets.set(ticketP20A.id, ticketP20A);
+
+    const asgnP20A: any = {
+      id: 'asgn_p20_a',
+      ticketId: ticketP20A.id,
+      technicianId: p20Tech1User.id,
+      assignedById: 'usr_op_1',
+      status: AssignmentStatus.PENDING,
+      assignedAt: p20Now
+    };
+    store.technicianAssignments.set(asgnP20A.id, asgnP20A);
+
+    // 27a. GET /api/v1/technicians/me/assignments returns enriched assignments
+    const tech1AssignmentsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/technicians/me/assignments',
+      undefined,
+      p20Tech1Token
+    );
+    assert(
+      tech1AssignmentsRes.status === 200 &&
+      Array.isArray(tech1AssignmentsRes.body.data) &&
+      tech1AssignmentsRes.body.data.length >= 1,
+      'Endpoint 38: GET /api/v1/technicians/me/assignments returns list of assignments'
+    );
+    const itemA = tech1AssignmentsRes.body.data.find((a: any) => a.ticketId === ticketP20A.id);
+    assert(
+      itemA &&
+      itemA.ticketNumber === 'TKT-P20-0001' &&
+      itemA.feederName === 'P20 Distribution Line' &&
+      itemA.meterAddress === 'P20 Tech Hub, Gulshan, Dhaka',
+      'Endpoint 38: Assignment read model enriches ticket with meter, feeder, and substation details'
+    );
+
+    // 27b. IDOR Protection: Technician 2 cannot accept Technician 1's assignment (403 NOT_ASSIGNED_TECHNICIAN)
+    const idorAcceptRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/accept`,
+      {},
+      p20Tech2Token
+    );
+    assert(
+      idorAcceptRes.status === 403 && idorAcceptRes.body.error.code === 'NOT_ASSIGNED_TECHNICIAN',
+      'IDOR Protection: Unauthorized technician blocked from accepting another technician assignment (403 NOT_ASSIGNED_TECHNICIAN)'
+    );
+
+    // 27c. Step 1: Technician 1 accepts assignment -> ASSIGNED to EN_ROUTE
+    const acceptResP20 = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/accept`,
+      {},
+      p20Tech1Token
+    );
+    assert(
+      acceptResP20.status === 200 &&
+      acceptResP20.body.data.status === OutageStatus.EN_ROUTE &&
+      asgnP20A.status === AssignmentStatus.ACCEPTED &&
+      asgnP20A.acceptedAt !== undefined,
+      'Endpoint 39: POST /api/v1/technicians/me/assignments/:id/accept transitions state to EN_ROUTE with ACCEPTED assignment'
+    );
+
+    // 27c. Step 2: Technician 1 starts repair -> EN_ROUTE to REPAIRING
+    const startRepairResP20 = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/start-repair`,
+      {},
+      p20Tech1Token
+    );
+    assert(
+      startRepairResP20.status === 200 &&
+      startRepairResP20.body.data.status === OutageStatus.REPAIRING &&
+      asgnP20A.status === AssignmentStatus.IN_PROGRESS &&
+      asgnP20A.startedAt !== undefined,
+      'Endpoint 40: POST /api/v1/technicians/me/assignments/:id/start-repair transitions state to REPAIRING with IN_PROGRESS assignment'
+    );
+
+    // 27d. Phase 19 Evidence Gate: Attempting to resolve without notes or short notes rejected (422)
+    const resolveShortNotesRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/resolve`,
+      { resolutionNotes: 'ok' },
+      p20Tech1Token
+    );
+    assert(
+      (resolveShortNotesRes.status === 400 || resolveShortNotesRes.status === 422) &&
+      (resolveShortNotesRes.body.error.code === 'RESOLUTION_NOTES_REQUIRED' ||
+        resolveShortNotesRes.body.error.code === 'VALIDATION_ERROR'),
+      'Resolution Gate: Resolving with notes < 5 characters rejected'
+    );
+
+    // Attempting to resolve without verified photo rejected (422 REPAIR_EVIDENCE_REQUIRED)
+    const resolveNoPhotoRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/resolve`,
+      { resolutionNotes: 'Replaced high-voltage drop out fuse link safely' },
+      p20Tech1Token
+    );
+    assert(
+      resolveNoPhotoRes.status === 422 &&
+      resolveNoPhotoRes.body.error.code === 'REPAIR_EVIDENCE_REQUIRED',
+      'Resolution Gate: Resolving without verified photo evidence rejected with 422 REPAIR_EVIDENCE_REQUIRED'
+    );
+
+    // 27e. Seed verified repair photo and resolve successfully
+    const attP20Id = `att_p20_${Date.now()}`;
+    store.outageAttachments.set(attP20Id, {
+      id: attP20Id,
+      ticketId: ticketP20A.id,
+      uploaderId: p20Tech1User.id,
+      storageKey: `repair-photos/${ticketP20A.id}/evidence.jpg`,
+      fileUrl: `/uploads/${ticketP20A.id}_evidence.jpg`,
+      fileName: 'transformer_fixed.jpg',
+      fileType: 'image/jpeg',
+      fileSize: 102400,
+      isVerified: true,
+      verifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    });
+
+    const resolveSuccessRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/technicians/me/assignments/${ticketP20A.id}/resolve`,
+      {
+        resolutionNotes:
+          'Replaced high-voltage drop out fuse link and replenished transformer oil'
+      },
+      p20Tech1Token
+    );
+    assert(
+      resolveSuccessRes.status === 200 &&
+      resolveSuccessRes.body.data.ticket.status === OutageStatus.RESOLVED &&
+      asgnP20A.status === AssignmentStatus.COMPLETED &&
+      asgnP20A.completedAt !== undefined &&
+      fdrP20.status === FeederStatus.ONLINE,
+      'Endpoint 42: POST /api/v1/technicians/me/assignments/:id/resolve resolves ticket and auto-restores feeder to ONLINE'
+    );
+
+    // 27f. Endpoint 43: GET /api/v1/technicians/me/stats computes metrics
+    const techStatsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/technicians/me/stats',
+      undefined,
+      p20Tech1Token
+    );
+    assert(
+      techStatsRes.status === 200 &&
+      techStatsRes.body.success === true &&
+      techStatsRes.body.data.technicianId === p20Tech1User.id &&
+      techStatsRes.body.data.resolvedTicketsCount >= 1 &&
+      techStatsRes.body.data.todayResolvedCount >= 1 &&
+      typeof techStatsRes.body.data.averageRepairDurationMinutes === 'number',
+      'Endpoint 43: GET /api/v1/technicians/me/stats computes resolved count, active workload, and average duration'
+    );
+
+    // 27g. Operator Dispatch Queue: GET /api/v1/operator/dispatch/queue
+    const ticketP20B: any = {
+      id: 'tkt_p20_unassigned_b',
+      ticketNumber: 'TKT-P20-0002',
+      customerId: 'usr_cust_1',
+      meterId: mtrP20.id,
+      feederId: fdrP20.id,
+      faultType: 'CABLE_CUT',
+      description: 'Underground high-voltage cable severed during excavation',
+      status: OutageStatus.REPORTED,
+      reportedAt: new Date(Date.now() - 140 * 60 * 1000).toISOString(),
+      createdAt: p20Now,
+      updatedAt: p20Now
+    };
+    store.outageTickets.set(ticketP20B.id, ticketP20B);
+
+    const dispatchQueueRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/dispatch/queue',
+      undefined,
+      opToken
+    );
+    assert(
+      dispatchQueueRes.status === 200 &&
+      dispatchQueueRes.body.success === true &&
+      Array.isArray(dispatchQueueRes.body.data.items) &&
+      dispatchQueueRes.body.data.items.length >= 1,
+      'Operator Dispatch Queue: GET /api/v1/operator/dispatch/queue returns queue with SLA wait times'
+    );
+    const queueItemB = dispatchQueueRes.body.data.items.find(
+      (item: any) => item.ticketId === ticketP20B.id
+    );
+    assert(
+      queueItemB &&
+      queueItemB.minutesWaiting >= 120 &&
+      queueItemB.isSlaBreached === true &&
+      queueItemB.assignedTechnician === null,
+      'Operator Dispatch Queue: Flags SLA breach (> 120 mins) and identifies unassigned tickets'
+    );
+
+    // 27h. Operator Technician Roster & In-Flight Reassignment
+    const techRosterRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/operator/technicians',
+      undefined,
+      opToken
+    );
+    assert(
+      techRosterRes.status === 200 &&
+      Array.isArray(techRosterRes.body.data) &&
+      techRosterRes.body.data.some(
+        (t: any) => t.id === p20Tech1User.id && typeof t.isAvailable === 'boolean'
+      ),
+      'Operator Dispatch Oversight: GET /api/v1/operator/technicians lists technician roster with live workload'
+    );
+
+    // Assign ticket B to technician 1 first
+    await outageService.assignTechnician(ticketP20B.id, p20Tech1User.id, 'usr_op_1');
+
+    // Operator reassigns in-flight ticket B from Technician 1 to Technician 2
+    const reassignRes = await request(
+      serverUrl,
+      'POST',
+      `/api/v1/operator/outages/${ticketP20B.id}/reassign`,
+      {
+        technicianId: p20Tech2User.id,
+        reason: 'Technician 1 re-routed to critical substation emergency'
+      },
+      opToken
+    );
+    assert(
+      reassignRes.status === 200 &&
+      reassignRes.body.success === true &&
+      reassignRes.body.data.assignedTechnicianId === p20Tech2User.id,
+      'Operator In-Flight Reassignment: POST /api/v1/operator/outages/:id/reassign successfully transfers ticket'
+    );
+
+    const reassignedHistory = Array.from(store.outageStatusHistories.values()).find(
+      (h) =>
+        h.ticketId === ticketP20B.id &&
+        h.notes?.includes('re-routed to critical substation emergency')
+    );
+    assert(
+      reassignedHistory !== undefined,
+      'Operator In-Flight Reassignment: Status history accurately records reassignment audit trail with operator reason'
+    );
+
 
 
   } catch (err: any) {
