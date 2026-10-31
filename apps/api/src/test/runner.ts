@@ -4347,6 +4347,195 @@ const runSuite = async () => {
       'Endpoint 51: Global Admin sees all infrastructure upgrade requests across all zones'
     );
 
+    // ========================================================================
+    // Test 29: Phase 22 — Admin Audit, Notification Telemetry & Upgrade Decisions
+    // ========================================================================
+    logger.info('\n--- Test 29: Phase 22 Admin Audit, Telemetry & Decisions ---');
+
+    // 29a. Endpoint 80: GET /api/v1/admin/audit-logs (Security Audit Trail Explorer)
+    const p22AuditLogsRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      undefined,
+      adminToken
+    );
+    assert(
+      p22AuditLogsRes.status === 200 &&
+      p22AuditLogsRes.body.success === true &&
+      Array.isArray(p22AuditLogsRes.body.data) &&
+      p22AuditLogsRes.body.data.length >= 1,
+      'Endpoint 80: GET /api/v1/admin/audit-logs returns forensic security audit trail'
+    );
+    const firstAuditEntry = p22AuditLogsRes.body.data[0];
+    assert(
+      firstAuditEntry.id &&
+      firstAuditEntry.action &&
+      firstAuditEntry.entity &&
+      firstAuditEntry.createdAt,
+      'Endpoint 80: Audit entries include id, action, entity, and timestamp'
+    );
+
+    // Test multi-factor filter (action filter)
+    const p22AuditActionRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/audit-logs?action=ZONE',
+      undefined,
+      adminToken
+    );
+    assert(
+      p22AuditActionRes.status === 200 &&
+      Array.isArray(p22AuditActionRes.body.data) &&
+      p22AuditActionRes.body.data.every((a: any) => a.action.toUpperCase().includes('ZONE')),
+      'Endpoint 80: Action filter correctly filters audit entries'
+    );
+
+    // Test pagination
+    const p22AuditPaginatedRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/audit-logs?page=1&pageSize=5',
+      undefined,
+      adminToken
+    );
+    assert(
+      p22AuditPaginatedRes.status === 200 &&
+      Array.isArray(p22AuditPaginatedRes.body.data.items) &&
+      p22AuditPaginatedRes.body.data.meta &&
+      p22AuditPaginatedRes.body.data.meta.pageSize === 5,
+      'Endpoint 80: Paginated query returns items and pagination metadata'
+    );
+
+    // 29b. RBAC Guard on Audit Trail: Non-admin users strictly forbidden (403)
+    const p22CustAuditRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      undefined,
+      customerToken
+    );
+    assert(
+      p22CustAuditRes.status === 403,
+      'RBAC Protection: Customer blocked from audit log explorer (403 Forbidden)'
+    );
+
+    const p22MgrAuditRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/audit-logs',
+      undefined,
+      p21MgrToken
+    );
+    assert(
+      p22MgrAuditRes.status === 403,
+      'RBAC Protection: Zone Manager blocked from audit log explorer (403 Forbidden)'
+    );
+
+    // 29c. Notification Delivery Telemetry: GET /api/v1/admin/notifications
+    const p22NotifTelemetryRes = await request(
+      serverUrl,
+      'GET',
+      '/api/v1/admin/notifications?telemetry=true',
+      undefined,
+      adminToken
+    );
+    assert(
+      p22NotifTelemetryRes.status === 200 &&
+      p22NotifTelemetryRes.body.success === true &&
+      typeof p22NotifTelemetryRes.body.data.deliverySuccessRate === 'number' &&
+      typeof p22NotifTelemetryRes.body.data.deliveredCount === 'number' &&
+      Array.isArray(p22NotifTelemetryRes.body.data.items),
+      'Notification Monitoring: GET /api/v1/admin/notifications?telemetry=true returns delivery analytics'
+    );
+
+    // 29d. Endpoint 81: PATCH /api/v1/infrastructure-requests/:id/status (Approval Decision)
+    const p22UpgradeReq: any = {
+      id: 'req_p22_test_approval',
+      requesterId: 'usr_mgr_1',
+      feederId: 'fdr_dhn_1',
+      reason: 'Chronic voltage sag and transformer overheating in Dhanmondi',
+      proposedAction: 'Replace 250kVA transformer with 500kVA hermetically sealed unit',
+      supportingMetrics: { faultCount: 7, avgDowntimeMinutes: 95 },
+      status: UpgradeRequestStatus.PENDING,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    store.infrastructureRequests.set(p22UpgradeReq.id, p22UpgradeReq);
+
+    const p22ApproveRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/infrastructure-requests/${p22UpgradeReq.id}/status`,
+      {
+        status: UpgradeRequestStatus.APPROVED,
+        adminNotes: 'Budget sanctioned from capital modernization allocation'
+      },
+      adminToken
+    );
+    assert(
+      p22ApproveRes.status === 200 &&
+      p22ApproveRes.body.success === true &&
+      p22ApproveRes.body.data.status === UpgradeRequestStatus.APPROVED &&
+      p22ApproveRes.body.data.adminNotes === 'Budget sanctioned from capital modernization allocation' &&
+      p22ApproveRes.body.data.reviewedById !== undefined,
+      'Endpoint 81: PATCH /api/v1/infrastructure-requests/:id/status transitions state to APPROVED'
+    );
+
+    // 29e. Requester Notification Hook: Zone Manager receives in-app alert regarding decision
+    const mgrNotifications = Array.from(store.notifications.values()).filter(
+      (n) => n.userId === 'usr_mgr_1' && n.type === NotificationType.UPGRADE_REQUEST_STATUS
+    );
+    assert(
+      mgrNotifications.length >= 1 &&
+      mgrNotifications.some((n) => n.message.includes('Budget sanctioned')),
+      'Decision Notification: Submitting Zone Manager receives in-app decision alert with admin notes'
+    );
+
+    // 29f. Forensic Audit Trail: REVIEW_INFRASTRUCTURE_REQUEST audit record created
+    const decisionAuditLog = Array.from(store.auditLogs.values()).find(
+      (l) => l.action === 'REVIEW_INFRASTRUCTURE_REQUEST' && l.entityId === p22UpgradeReq.id
+    );
+    assert(
+      decisionAuditLog !== undefined &&
+      decisionAuditLog.details?.status === UpgradeRequestStatus.APPROVED,
+      'Decision Audit: REVIEW_INFRASTRUCTURE_REQUEST audit entry automatically generated'
+    );
+
+    // 29g. Terminal State Immutability Guard: Second review attempt rejected with 409
+    const p22SecondReviewRes = await request(
+      serverUrl,
+      'PATCH',
+      `/api/v1/infrastructure-requests/${p22UpgradeReq.id}/status`,
+      {
+        status: UpgradeRequestStatus.REJECTED,
+        adminNotes: 'Attempting to reverse decision'
+      },
+      adminToken
+    );
+    assert(
+      p22SecondReviewRes.status === 409 &&
+      p22SecondReviewRes.body.error.code === 'INVALID_STATE_TRANSITION',
+      'Terminal State Guard: Mutating already evaluated infrastructure request rejected with 409'
+    );
+
+    // 29h. Not Found Guard: Non-existent request ID returns 404
+    const p22NotFoundReviewRes = await request(
+      serverUrl,
+      'PATCH',
+      '/api/v1/infrastructure-requests/req_non_existent_xyz/status',
+      {
+        status: UpgradeRequestStatus.APPROVED,
+        adminNotes: 'Should fail'
+      },
+      adminToken
+    );
+    assert(
+      p22NotFoundReviewRes.status === 404 &&
+      p22NotFoundReviewRes.body.error.code === 'REQUEST_NOT_FOUND',
+      'Not Found Guard: Non-existent infrastructure request review returns 404 REQUEST_NOT_FOUND'
+    );
+
 
 
   } catch (err: any) {

@@ -906,7 +906,7 @@ const handleGetAuditLogs = (req: any, res: any, next: any) => {
     const result = adminService.getAuditLogs(query);
 
     if (req.query.page || req.query.pageSize) {
-      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+      return paginatedResponse(res, result.items, result.total, result.page, result.pageSize);
     }
     return successResponse(res, result.items);
   } catch (err) {
@@ -926,7 +926,7 @@ const handleGetAdminNotifications = (req: any, res: any, next: any) => {
     const result = adminService.getNotificationDeliveryLogs(query);
 
     if (req.query.page || req.query.pageSize) {
-      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+      return paginatedResponse(res, result.items, result.total, result.page, result.pageSize);
     }
     if (req.query.telemetry === 'true') {
       return successResponse(res, result);

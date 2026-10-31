@@ -88,7 +88,7 @@ const handleManagerTickets = (req: any, res: Response, next: NextFunction) => {
     const result = managerService.getZoneTickets(zoneId, query);
 
     if (req.query.page || req.query.pageSize) {
-      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+      return paginatedResponse(res, result.items, result.total, result.page, result.pageSize);
     }
     return successResponse(res, result.items);
   } catch (err) {
@@ -256,7 +256,7 @@ const handleListUpgradeRequests = (req: any, res: Response, next: NextFunction) 
     );
 
     if (req.query.page || req.query.pageSize) {
-      return paginatedResponse(res, result.items, result.page, result.pageSize, result.total);
+      return paginatedResponse(res, result.items, result.total, result.page, result.pageSize);
     }
     return successResponse(res, result.items);
   } catch (err) {
